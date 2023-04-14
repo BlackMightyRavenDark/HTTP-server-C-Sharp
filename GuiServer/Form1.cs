@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -13,6 +14,7 @@ namespace GuiServer
         private Socket server = null;
         private bool active = false;
         private List<Socket> clientList;
+        private string publicDir = Path.GetDirectoryName(Application.ExecutablePath);
 
         public Form1()
         {
@@ -105,16 +107,42 @@ namespace GuiServer
             string[] strings = msg.Split(new string[] { "\r\n" }, StringSplitOptions.None);
             LogEvent($"{client.RemoteEndPoint} sent: {strings[0]}");
             string[] request = strings[0].Split(new char[] { ' ' }, 3);
-            string answer = request[0] == "GET" ?
-                GenerateResponse(200, "OK", "OK") :
-                GenerateResponse(400, "Bad request", null);
-            SendMessage(client, answer);
+            string fileRequested = request[1];
+            string fullFilePath = Path.Combine(publicDir, fileRequested.Remove(0, 1));
+            if (!string.IsNullOrEmpty(fullFilePath) && !string.IsNullOrWhiteSpace(fullFilePath) &&
+                File.Exists(fullFilePath))
+            {
+                SendData(client, File.ReadAllBytes(fullFilePath));
+            }
+            else
+            {
+                SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
+            }
         }
 
         private void SendMessage(Socket client, string msg)
         {
             byte[] msgBytes = Encoding.UTF8.GetBytes(msg);
             client.Send(msgBytes);
+        }
+
+        private void SendData(Socket client, byte[] data)
+        {
+            string t = $"HTTP/1.1 200 OK\r\n" +
+                "Access-Control-Allow-Origin: *\r\n";
+                t += "Content-Type: text/plain; charset=UTF-8\r\n" +
+                    $"Content-Length: {data.Length}\r\n\r\n";
+            byte[] header = Encoding.UTF8.GetBytes(t);
+            byte[] buffer = new byte[header.Length + data.Length];
+            for (int i = 0; i < header.Length; ++i)
+            {
+                buffer[i] = header[i];
+            }
+            for (int i = 0; i < data.Length; ++i)
+            {
+                buffer[i + header.Length] = data[i];
+            }
+            client.Send(buffer);
         }
 
         private void DisconnectClient(Socket client, bool autoRemove = true)
