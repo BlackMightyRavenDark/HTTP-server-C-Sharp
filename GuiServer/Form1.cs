@@ -66,8 +66,10 @@ namespace GuiServer
 
                             Task.Run(() =>
                             {
-                                ProcessClient(client);
-                                DisconnectClient(client);
+                                if (ProcessClient(client))
+                                {
+                                    DisconnectClient(client);
+                                }
                             });
                         }
                         catch (Exception ex)
@@ -90,48 +92,66 @@ namespace GuiServer
             }
         }
 
-        private void ProcessClient(Socket client)
+        private bool ProcessClient(Socket client)
         {
             AddClient(client);
 
             byte[] buffer = new byte[ushort.MaxValue];
-            int bytesRead = client.Receive(buffer, 0, buffer.Length, SocketFlags.None);
-            if (bytesRead == 0)
+            try
             {
-                LogEvent($"Zero bytes received from {client.RemoteEndPoint}");
-                return;
-            }
-
-            string msg = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-
-            string[] strings = msg.Split(new string[] { "\r\n" }, StringSplitOptions.None);
-            LogEvent($"{client.RemoteEndPoint} sent: {strings[0]}");
-            string[] request = strings[0].Split(new char[] { ' ' }, 3);
-            if (request.Length == 3)
-            {
-                if (request[0] == "GET")
+                int bytesRead = client.Receive(buffer, 0, buffer.Length, SocketFlags.None);
+                if (bytesRead == 0)
                 {
-                    string fileRequested = request[1];
-                    string fullFilePath = Path.Combine(publicDir, fileRequested.Remove(0, 1));
-                    if (!string.IsNullOrEmpty(fullFilePath) && !string.IsNullOrWhiteSpace(fullFilePath) &&
-                        File.Exists(fullFilePath))
+                    LogEvent($"Zero bytes received from {client.RemoteEndPoint}");
+                    return true;
+                }
+
+                string msg = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+
+                string[] strings = msg.Split(new string[] { "\r\n" }, StringSplitOptions.None);
+                LogEvent($"{client.RemoteEndPoint} sent: {strings[0]}");
+                string[] request = strings[0].Split(new char[] { ' ' }, 3);
+                if (request.Length == 3)
+                {
+                    if (request[0] == "GET")
                     {
-                        SendData(client, File.ReadAllBytes(fullFilePath));
+                        string fileRequested = request[1];
+                        string fullFilePath = Path.Combine(publicDir, fileRequested.Remove(0, 1));
+                        if (!string.IsNullOrEmpty(fullFilePath) && !string.IsNullOrWhiteSpace(fullFilePath) &&
+                            File.Exists(fullFilePath))
+                        {
+                            SendData(client, File.ReadAllBytes(fullFilePath));
+                        }
+                        else
+                        {
+                            SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
+                        }
                     }
                     else
                     {
-                        SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
+                        SendMessage(client, GenerateResponse(405, "Method not allowed", "Unsupported method"));
                     }
                 }
                 else
                 {
-                    SendMessage(client, GenerateResponse(405, "Method not allowed", "Unsupported method"));
+                    SendMessage(client, GenerateResponse(400, "Client error", "Invalid request"));
                 }
             }
-            else
+            catch (Exception ex)
             {
-                SendMessage(client, GenerateResponse(400, "Client error", "Invalid request"));
+                System.Diagnostics.Debug.WriteLine(ex.Message);
+                if (ex is SocketException)
+                {
+                    int socketErrorCode = (ex as SocketException).ErrorCode;
+                    string t = $"Client read error! Socket error {socketErrorCode}";
+                    System.Diagnostics.Debug.WriteLine(t);
+
+                    const int WSAEINTR = 10004;
+                    return socketErrorCode != WSAEINTR;
+                }
             }
+
+            return true;
         }
 
         private void SendMessage(Socket client, string msg)
