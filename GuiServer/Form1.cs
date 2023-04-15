@@ -107,16 +107,30 @@ namespace GuiServer
             string[] strings = msg.Split(new string[] { "\r\n" }, StringSplitOptions.None);
             LogEvent($"{client.RemoteEndPoint} sent: {strings[0]}");
             string[] request = strings[0].Split(new char[] { ' ' }, 3);
-            string fileRequested = request[1];
-            string fullFilePath = Path.Combine(publicDir, fileRequested.Remove(0, 1));
-            if (!string.IsNullOrEmpty(fullFilePath) && !string.IsNullOrWhiteSpace(fullFilePath) &&
-                File.Exists(fullFilePath))
+            if (request.Length == 3)
             {
-                SendData(client, File.ReadAllBytes(fullFilePath));
+                if (request[0] == "GET")
+                {
+                    string fileRequested = request[1];
+                    string fullFilePath = Path.Combine(publicDir, fileRequested.Remove(0, 1));
+                    if (!string.IsNullOrEmpty(fullFilePath) && !string.IsNullOrWhiteSpace(fullFilePath) &&
+                        File.Exists(fullFilePath))
+                    {
+                        SendData(client, File.ReadAllBytes(fullFilePath));
+                    }
+                    else
+                    {
+                        SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
+                    }
+                }
+                else
+                {
+                    SendMessage(client, GenerateResponse(405, "Method not allowed", "Unsupported method"));
+                }
             }
             else
             {
-                SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
+                SendMessage(client, GenerateResponse(400, "Client error", "Invalid request"));
             }
         }
 
