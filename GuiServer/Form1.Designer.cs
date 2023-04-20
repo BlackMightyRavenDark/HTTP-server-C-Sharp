@@ -142,6 +142,7 @@
             this.Name = "Form1";
             this.Text = "HTTP server";
             this.FormClosed += new System.Windows.Forms.FormClosedEventHandler(this.Form1_FormClosed);
+            this.Load += new System.EventHandler(this.Form1_Load);
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDownServerPort)).EndInit();
             this.ResumeLayout(false);
             this.PerformLayout();

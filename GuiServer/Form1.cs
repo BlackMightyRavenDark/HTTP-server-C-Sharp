@@ -15,10 +15,21 @@ namespace GuiServer
         private bool active = false;
         private List<Socket> clientList;
         private string publicDir = Path.GetDirectoryName(Application.ExecutablePath);
+        private Dictionary<string, string> contentTypes = new Dictionary<string, string>();
 
         public Form1()
         {
             InitializeComponent();
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            string selfDir = Path.GetDirectoryName(Application.ExecutablePath);
+            string contentTypesFilePath = $"{selfDir}\\mime.txt";
+            if (File.Exists(contentTypesFilePath))
+            {
+                LoadContentTypes(contentTypesFilePath);
+            }
         }
 
         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
@@ -120,7 +131,9 @@ namespace GuiServer
                         if (!string.IsNullOrEmpty(fullFilePath) && !string.IsNullOrWhiteSpace(fullFilePath) &&
                             File.Exists(fullFilePath))
                         {
-                            SendData(client, File.ReadAllBytes(fullFilePath));
+                            string fileExtension = Path.GetExtension(fullFilePath);
+                            byte[] fileBytes = File.ReadAllBytes(fullFilePath);
+                            SendData(client, fileBytes, fileExtension);
                         }
                         else
                         {
@@ -160,12 +173,12 @@ namespace GuiServer
             client.Send(msgBytes);
         }
 
-        private void SendData(Socket client, byte[] data)
+        private void SendData(Socket client, byte[] data, string fileExtension)
         {
             string t = $"HTTP/1.1 200 OK\r\n" +
                 "Access-Control-Allow-Origin: *\r\n";
-                t += "Content-Type: text/plain; charset=UTF-8\r\n" +
-                    $"Content-Length: {data.Length}\r\n\r\n";
+            t += $"Content-Type: {GetContentType(fileExtension)}\r\n" +
+                $"Content-Length: {data.Length}\r\n\r\n";
             byte[] header = Encoding.UTF8.GetBytes(t);
             byte[] buffer = new byte[header.Length + data.Length];
             for (int i = 0; i < header.Length; ++i)
@@ -288,6 +301,50 @@ namespace GuiServer
             btnStopServer.Enabled = false;
             numericUpDownServerPort.Enabled = true;
             btnStartServer.Enabled = true;
+        }
+
+        private void LoadContentTypes(string filePath)
+        {
+            string fileContent = File.ReadAllText(filePath);
+            string[] strings = fileContent.Split(new string[] { "\r\n" }, StringSplitOptions.None);
+            foreach (string str in strings)
+            {
+                if (string.IsNullOrEmpty(str) || string.IsNullOrWhiteSpace(str) || str.StartsWith("#"))
+                {
+                    continue;
+                }
+
+                string[] keyValue = str.Split(new char[] { '|' }, 2);
+                if (keyValue != null && keyValue.Length == 2)
+                {
+                    if (!string.IsNullOrEmpty(keyValue[0]) && !string.IsNullOrWhiteSpace(keyValue[0]))
+                    {
+                        string contentTypeValueTrimmed = keyValue[0].Trim();
+                        string[] extensions = keyValue[1].ToLower().Split(',');
+                        if (extensions != null && extensions.Length > 0)
+                        {
+                            foreach (string extension in extensions)
+                            {
+                                if (!string.IsNullOrEmpty(extension) && !string.IsNullOrWhiteSpace(extension))
+                                {
+                                    string extensionTrimmed = extension.Trim();
+                                    if (!extensionTrimmed.Contains(" ") && extensionTrimmed.StartsWith("."))
+                                    {
+                                        contentTypes.Add(extensionTrimmed, contentTypeValueTrimmed);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private string GetContentType(string ext)
+        {
+            return contentTypes != null && !string.IsNullOrEmpty(ext) && !string.IsNullOrWhiteSpace(ext) &&
+                contentTypes.ContainsKey(ext) ? contentTypes[ext] :
+                "text/plain; charset=UTF-8";
         }
     }
 }
