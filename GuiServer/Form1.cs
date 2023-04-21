@@ -264,7 +264,7 @@ namespace GuiServer
             }
             else
             {
-                string dateTime = DateTime.Now.ToString("yyyy.MM.dd hh:mm:ss");
+                string dateTime = DateTime.Now.ToString("yyyy.MM.dd HH:mm:ss");
                 listBoxLog.Items.Add($"{dateTime}> {eventText}");
                 if (checkBoxAutoscroll.Checked)
                 {
