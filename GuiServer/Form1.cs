@@ -24,7 +24,8 @@ namespace GuiServer
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            string selfDir = Path.GetDirectoryName(Application.ExecutablePath);
+            string selfDir = publicDir = Path.GetDirectoryName(Application.ExecutablePath);
+            textBoxPublicDirectory.Text = publicDir;
             string contentTypesFilePath = $"{selfDir}\\mime.txt";
             if (File.Exists(contentTypesFilePath))
             {
@@ -37,6 +38,11 @@ namespace GuiServer
             StopServer(server);
         }
 
+        private void textBoxPublicDirectory_TextChanged(object sender, EventArgs e)
+        {
+            publicDir = textBoxPublicDirectory.Text;
+        }
+
         private void btnStartServer_Click(object sender, EventArgs e)
         {
             StartServer();
@@ -47,10 +53,52 @@ namespace GuiServer
             StopServer(server);
         }
 
+        private void btnBrowsePublicDirectory_Click(object sender, EventArgs e)
+        {
+            FolderBrowserDialog fbd = new FolderBrowserDialog();
+            fbd.Description = "Выберите папку для общего доступа";
+            if (!string.IsNullOrEmpty(publicDir) && !string.IsNullOrWhiteSpace(publicDir))
+            {
+                fbd.SelectedPath = publicDir;
+            }
+            if (fbd.ShowDialog() == DialogResult.OK)
+            {
+                publicDir = fbd.SelectedPath;
+                textBoxPublicDirectory.Text = publicDir;
+            }
+
+            fbd.Dispose();
+        }
+
         private void StartServer()
         {
             btnStartServer.Enabled = false;
             numericUpDownServerPort.Enabled = false;
+            textBoxPublicDirectory.Enabled = false;
+            btnBrowsePublicDirectory.Enabled = false;
+
+            if (string.IsNullOrEmpty(publicDir) || string.IsNullOrWhiteSpace(publicDir))
+            {
+                MessageBox.Show("Не указана папка для общего доступа!", "Ошибка!",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                btnStartServer.Enabled = true;
+                numericUpDownServerPort.Enabled = true;
+                textBoxPublicDirectory.Enabled = true;
+                btnBrowsePublicDirectory.Enabled = true;
+                return;
+            }
+
+            if (!Directory.Exists(publicDir))
+            {
+                MessageBox.Show("Папка для общего доступа не найдена!", "Ошибка!",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                btnStartServer.Enabled = true;
+                numericUpDownServerPort.Enabled = true;
+                textBoxPublicDirectory.Enabled = true;
+                btnBrowsePublicDirectory.Enabled = true;
+                return;
+            }
+
             btnStopServer.Enabled = true;
 
             int serverPort = (int)numericUpDownServerPort.Value;
@@ -100,6 +148,8 @@ namespace GuiServer
                 btnStartServer.Enabled = true;
                 btnStopServer.Enabled = false;
                 numericUpDownServerPort.Enabled = true;
+                textBoxPublicDirectory.Enabled = true;
+                btnBrowsePublicDirectory.Enabled = true;
             }
         }
 
@@ -301,6 +351,8 @@ namespace GuiServer
             btnStopServer.Enabled = false;
             numericUpDownServerPort.Enabled = true;
             btnStartServer.Enabled = true;
+            textBoxPublicDirectory.Enabled = true;
+            btnBrowsePublicDirectory.Enabled = true;
         }
 
         private void LoadContentTypes(string filePath)
