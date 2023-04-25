@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Newtonsoft.Json.Linq;
 
 namespace GuiServer
 {
@@ -14,8 +15,8 @@ namespace GuiServer
         private Socket server = null;
         private bool active = false;
         private List<Socket> clientList;
-        private string publicDir = Path.GetDirectoryName(Application.ExecutablePath);
         private Dictionary<string, string> contentTypes = new Dictionary<string, string>();
+        private Configurator configurator;
 
         public Form1()
         {
@@ -24,23 +25,56 @@ namespace GuiServer
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            string selfDir = publicDir = Path.GetDirectoryName(Application.ExecutablePath);
-            textBoxPublicDirectory.Text = publicDir;
+            string selfDir = Path.GetDirectoryName(Application.ExecutablePath);
             string contentTypesFilePath = $"{selfDir}\\mime.txt";
             if (File.Exists(contentTypesFilePath))
             {
                 LoadContentTypes(contentTypesFilePath);
             }
+
+            configurator = new Configurator();
+            configurator.Saving += (s, json) =>
+            {
+                json["serverPort"] = configurator.ServerPort;
+                json["publicDirectory"] = configurator.PublicDirectory;
+            };
+            configurator.Loading += (s, json) =>
+            {
+                JToken jt = json.Value<JToken>("serverPort");
+                if (jt != null)
+                {
+                    configurator.ServerPort = jt.Value<int>();
+                }
+
+                jt = json.Value<JToken>("publicDirectory");
+                if (jt != null)
+                {
+                    configurator.PublicDirectory = jt.Value<string>();
+                }
+            };
+            configurator.Loaded += (s) =>
+            {
+                numericUpDownServerPort.Value = configurator.ServerPort;
+                textBoxPublicDirectory.Text = configurator.PublicDirectory;
+            };
+
+            configurator.Load();
         }
 
         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
         {
             StopServer(server);
+            configurator.Save();
+        }
+
+        private void numericUpDownServerPort_ValueChanged(object sender, EventArgs e)
+        {
+            configurator.ServerPort = (int)numericUpDownServerPort.Value;
         }
 
         private void textBoxPublicDirectory_TextChanged(object sender, EventArgs e)
         {
-            publicDir = textBoxPublicDirectory.Text;
+            configurator.PublicDirectory = textBoxPublicDirectory.Text;
         }
 
         private void btnStartServer_Click(object sender, EventArgs e)
@@ -57,14 +91,15 @@ namespace GuiServer
         {
             FolderBrowserDialog fbd = new FolderBrowserDialog();
             fbd.Description = "Выберите папку для общего доступа";
-            if (!string.IsNullOrEmpty(publicDir) && !string.IsNullOrWhiteSpace(publicDir))
+            if (!string.IsNullOrEmpty(configurator.PublicDirectory) &&
+                !string.IsNullOrWhiteSpace(configurator.PublicDirectory))
             {
-                fbd.SelectedPath = publicDir;
+                fbd.SelectedPath = configurator.PublicDirectory;
             }
             if (fbd.ShowDialog() == DialogResult.OK)
             {
-                publicDir = fbd.SelectedPath;
-                textBoxPublicDirectory.Text = publicDir;
+                configurator.PublicDirectory = fbd.SelectedPath;
+                textBoxPublicDirectory.Text = configurator.PublicDirectory;
             }
 
             fbd.Dispose();
@@ -77,7 +112,8 @@ namespace GuiServer
             textBoxPublicDirectory.Enabled = false;
             btnBrowsePublicDirectory.Enabled = false;
 
-            if (string.IsNullOrEmpty(publicDir) || string.IsNullOrWhiteSpace(publicDir))
+            if (string.IsNullOrEmpty(configurator.PublicDirectory) ||
+                string.IsNullOrWhiteSpace(configurator.PublicDirectory))
             {
                 MessageBox.Show("Не указана папка для общего доступа!", "Ошибка!",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -88,7 +124,7 @@ namespace GuiServer
                 return;
             }
 
-            if (!Directory.Exists(publicDir))
+            if (!Directory.Exists(configurator.PublicDirectory))
             {
                 MessageBox.Show("Папка для общего доступа не найдена!", "Ошибка!",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -101,17 +137,16 @@ namespace GuiServer
 
             btnStopServer.Enabled = true;
 
-            int serverPort = (int)numericUpDownServerPort.Value;
             try
             {
-                IPEndPoint endPoint = new IPEndPoint(IPAddress.Any, serverPort);
+                IPEndPoint endPoint = new IPEndPoint(IPAddress.Any, configurator.ServerPort);
                 server = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 server.Bind(endPoint);
                 server.Listen((int)SocketOptionName.MaxConnections);
 
                 clientList = new List<Socket>();
 
-                LogEvent($"Server started on port {serverPort}");
+                LogEvent($"Server started on port {configurator.ServerPort}");
 
                 active = true;
                 Task.Run(() =>
@@ -177,7 +212,7 @@ namespace GuiServer
                     if (request[0] == "GET")
                     {
                         string fileRequested = request[1];
-                        string fullFilePath = Path.Combine(publicDir, fileRequested.Remove(0, 1));
+                        string fullFilePath = Path.Combine(configurator.PublicDirectory, fileRequested.Remove(0, 1));
                         if (!string.IsNullOrEmpty(fullFilePath) && !string.IsNullOrWhiteSpace(fullFilePath) &&
                             File.Exists(fullFilePath))
                         {

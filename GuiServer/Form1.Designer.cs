@@ -36,9 +36,9 @@
             this.listBoxLog = new System.Windows.Forms.ListBox();
             this.checkBoxAutoscroll = new System.Windows.Forms.CheckBox();
             this.groupBox1 = new System.Windows.Forms.GroupBox();
+            this.label1 = new System.Windows.Forms.Label();
             this.btnBrowsePublicDirectory = new System.Windows.Forms.Button();
             this.textBoxPublicDirectory = new System.Windows.Forms.TextBox();
-            this.label1 = new System.Windows.Forms.Label();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDownServerPort)).BeginInit();
             this.groupBox1.SuspendLayout();
             this.SuspendLayout();
@@ -94,6 +94,7 @@
             0,
             0,
             0});
+            this.numericUpDownServerPort.ValueChanged += new System.EventHandler(this.numericUpDownServerPort_ValueChanged);
             // 
             // labelLog
             // 
@@ -146,6 +147,16 @@
             this.groupBox1.TabStop = false;
             this.groupBox1.Text = "Папка для общего доступа";
             // 
+            // label1
+            // 
+            this.label1.AutoSize = true;
+            this.label1.Location = new System.Drawing.Point(6, 43);
+            this.label1.Name = "label1";
+            this.label1.Size = new System.Drawing.Size(483, 13);
+            this.label1.TabIndex = 2;
+            this.label1.Text = "Внимание! Всё содержимое этой папки станет доступно всем в локальной сети и интер" +
+    "нете!";
+            // 
             // btnBrowsePublicDirectory
             // 
             this.btnBrowsePublicDirectory.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
@@ -166,16 +177,6 @@
             this.textBoxPublicDirectory.Size = new System.Drawing.Size(511, 20);
             this.textBoxPublicDirectory.TabIndex = 0;
             this.textBoxPublicDirectory.TextChanged += new System.EventHandler(this.textBoxPublicDirectory_TextChanged);
-            // 
-            // label1
-            // 
-            this.label1.AutoSize = true;
-            this.label1.Location = new System.Drawing.Point(6, 43);
-            this.label1.Name = "label1";
-            this.label1.Size = new System.Drawing.Size(483, 13);
-            this.label1.TabIndex = 2;
-            this.label1.Text = "Внимание! Всё содержимое этой папки станет доступно всем в локальной сети и интер" +
-    "нете!";
             // 
             // Form1
             // 
