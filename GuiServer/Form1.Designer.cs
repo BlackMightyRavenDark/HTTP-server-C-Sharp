@@ -114,6 +114,7 @@
             this.listBoxLog.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(204)));
             this.listBoxLog.ForeColor = System.Drawing.Color.Lime;
             this.listBoxLog.FormattingEnabled = true;
+            this.listBoxLog.HorizontalScrollbar = true;
             this.listBoxLog.ItemHeight = 20;
             this.listBoxLog.Location = new System.Drawing.Point(12, 134);
             this.listBoxLog.Name = "listBoxLog";
