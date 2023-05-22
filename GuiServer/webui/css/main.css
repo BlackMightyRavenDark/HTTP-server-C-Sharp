@@ -1,0 +1,56 @@
+body {
+    background-color: #222222;
+}
+
+a {
+    text-decoration: none;
+}
+
+#path {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    color: white;
+}
+
+#path > span {
+    cursor: pointer;
+    border-bottom: 2px dashed white;
+}
+
+#path > span:hover {
+    color: deepskyblue;
+    border-bottom: 2px dashed deepskyblue;
+}
+
+#path > span::after {
+    content: '/';
+    color: yellow;
+}
+
+#filelist {
+    display: flex;
+    flex-direction: column;
+}
+
+#filelist > a {
+    cursor: pointer;
+    color: white;
+}
+
+#filelist > a:hover {
+    color: deepskyblue;
+    border: 1px solid deepskyblue;
+}
+
+.item-directory {
+    color: yellow;
+}
+
+.item-directory:hover {
+    color: deepskyblue;
+}
+
+.item-directory::after {
+    content: '/';
+}

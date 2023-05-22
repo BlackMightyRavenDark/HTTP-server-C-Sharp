@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
+using System.Web;
 using System.Windows.Forms;
 using Newtonsoft.Json.Linq;
 
@@ -17,6 +18,7 @@ namespace GuiServer
         private List<Socket> clientList;
         private Dictionary<string, string> contentTypes = new Dictionary<string, string>();
         private Configurator configurator;
+        private string webuiPath = $"{Path.GetDirectoryName(Application.ExecutablePath)}\\webui";
 
         public Form1()
         {
@@ -203,18 +205,28 @@ namespace GuiServer
                 }
 
                 string msg = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-
                 string[] strings = msg.Split(new string[] { "\r\n" }, StringSplitOptions.None);
                 LogEvent($"{client.RemoteEndPoint} sent: {strings[0]}");
+
                 string[] request = strings[0].Split(new char[] { ' ' }, 3);
                 if (request.Length == 3)
                 {
                     if (request[0] == "GET")
                     {
-                        string fileRequested = request[1];
-                        string fullFilePath = Path.Combine(configurator.PublicDirectory, fileRequested.Remove(0, 1));
-                        if (!string.IsNullOrEmpty(fullFilePath) && !string.IsNullOrWhiteSpace(fullFilePath) &&
-                            File.Exists(fullFilePath))
+                        if (request[1].StartsWith("/api/"))
+                        {
+                            ProcessApiRequest(client, request[1].Substring(4));
+                            return true;
+                        }
+                        else if (request[1].StartsWith("/@"))
+                        {
+                            ProcessFileRequest(client, request[1].Substring(2));
+                            return true;
+                        }
+
+                        string fileRequested = request[1] == "/" ? "index.html" : request[1].Remove(0, 1);
+                        string fullFilePath = Path.Combine(webuiPath, fileRequested);
+                        if (File.Exists(fullFilePath))
                         {
                             string fileExtension = Path.GetExtension(fullFilePath);
                             byte[] fileBytes = File.ReadAllBytes(fullFilePath);
@@ -256,6 +268,75 @@ namespace GuiServer
         {
             byte[] msgBytes = Encoding.UTF8.GetBytes(msg);
             client.Send(msgBytes);
+        }
+
+        private void ProcessApiRequest(Socket client, string requestedUrl)
+        {
+            if (requestedUrl.StartsWith("/browse?"))
+            {
+                ProcessApiBrowse(client, requestedUrl.Substring(8));
+            }
+        }
+
+        private void ProcessApiBrowse(Socket client, string requestedUrl)
+        {
+            string decodedUrl = HttpUtility.UrlDecode(requestedUrl);
+            LogEvent($"{client.RemoteEndPoint} browsed to {decodedUrl}");
+
+            string path = Path.Combine(configurator.PublicDirectory, decodedUrl.Remove(0, 1).Replace("/", "\\"));
+            if (Directory.Exists(path))
+            {
+                JArray jArray = new JArray();
+
+                string[] directories = Directory.GetDirectories(path);
+                foreach (string directory in directories)
+                {
+                    JObject jDir = new JObject();
+                    jDir["name"] = Path.GetFileName(directory);
+                    jDir["type"] = "directory";
+                    jArray.Add(jDir);
+                }
+
+                string[] files = Directory.GetFiles(path);
+                foreach (string file in files)
+                {
+                    JObject jFile = new JObject();
+                    jFile["name"] = Path.GetFileName(file);
+                    jFile["type"] = "file";
+                    jArray.Add(jFile);
+                }
+
+                SendData(client, Encoding.UTF8.GetBytes(jArray.ToString()), ".json");
+            }
+        }
+
+        private void ProcessFileRequest(Socket client, string requestedFilePath)
+        {
+            if (string.IsNullOrEmpty(requestedFilePath) || string.IsNullOrWhiteSpace(requestedFilePath))
+            {
+                SendMessage(client, GenerateResponse(404, "Client error", "No file specified"));
+                return;
+            }
+
+            string decodedFilePath = HttpUtility.UrlDecode(requestedFilePath);
+            LogEvent($"{client.RemoteEndPoint} requested file {decodedFilePath}");
+            
+            if (decodedFilePath.StartsWith("/"))
+            {
+                decodedFilePath = decodedFilePath.Remove(0, 1);
+            }
+ 
+            string fullFilePath = Path.Combine(configurator.PublicDirectory, decodedFilePath.Replace("/", "\\"));
+            if (File.Exists(fullFilePath))
+            {
+                byte[] fileBytes = File.ReadAllBytes(fullFilePath);
+                string fileExtension = Path.GetExtension(fullFilePath);
+                SendData(client, fileBytes, fileExtension.ToLower());
+            }
+            else
+            {
+                SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
+            }
         }
 
         private void SendData(Socket client, byte[] data, string fileExtension)

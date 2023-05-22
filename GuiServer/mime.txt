@@ -1,5 +1,5 @@
 ﻿#Картинки
-image/bitmap	|.bmp
+image/bmp		|.bmp
 image/gif		|.gif
 image/jpeg		|.jpg, .jpeg, .jfif, .pjpeg, .pjp
 image/tiff		|.tiff
@@ -24,6 +24,11 @@ audio/mp3		|.mp3
 audio/mp4		|.m4a
 audio/vnd.wave	|.wav
 video/webm		|.weba
+
+#HTML / CSS / JS
+text/css			|.css
+text/html			|.html
+text/javascript		|.js
 
 #Разное
 application/json	|.json
