@@ -18,7 +18,8 @@ namespace GuiServer
         private List<Socket> clientList;
         private Dictionary<string, string> contentTypes = new Dictionary<string, string>();
         private Configurator configurator;
-        private string webuiPath = $"{Path.GetDirectoryName(Application.ExecutablePath)}\\webui";
+        private static readonly string selfDirPath = Path.GetDirectoryName(Application.ExecutablePath);
+        private readonly string webuiPath = $"{selfDirPath}\\webui";
 
         public Form1()
         {
@@ -27,8 +28,7 @@ namespace GuiServer
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            string selfDir = Path.GetDirectoryName(Application.ExecutablePath);
-            string contentTypesFilePath = $"{selfDir}\\mime.txt";
+            string contentTypesFilePath = $"{selfDirPath}\\mime.txt";
             if (File.Exists(contentTypesFilePath))
             {
                 LoadContentTypes(contentTypesFilePath);
@@ -237,6 +237,30 @@ namespace GuiServer
                             SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
                         }
                     }
+                    else if (request[0] == "HEAD")
+                    {
+                        string fileRequested = request[1] == "/" ? "index.html" : request[1].Remove(0, 1);
+                        string fullFilePath;
+                        if (fileRequested.StartsWith("@/"))
+                        {
+                            fileRequested = fileRequested.Remove(0, 2);
+                            fullFilePath = Path.Combine(configurator.PublicDirectory, fileRequested);
+                        }
+                        else
+                        {
+                            fullFilePath = Path.Combine(webuiPath, fileRequested);
+                        }
+
+                        if (File.Exists(fullFilePath))
+                        {
+                            string headers = BuildHeaders(fullFilePath);
+                            SendMessage(client, $"HTTP/1.1 200 OK\r\n{headers}\r\n\r\n");
+                        }
+                        else
+                        {
+                            SendMessage(client, GenerateResponse(404, "Not found", null));
+                        }
+                    }
                     else
                     {
                         SendMessage(client, GenerateResponse(405, "Method not allowed", "Unsupported method"));
@@ -268,6 +292,27 @@ namespace GuiServer
         {
             byte[] msgBytes = Encoding.UTF8.GetBytes(msg);
             client.Send(msgBytes);
+        }
+
+        private string BuildHeaders(string filePath)
+        {
+            string contentType = GetContentType(Path.GetExtension(filePath));
+            long fileSize = GetFileSize(filePath);
+            string t = $"Access-Control-Allow-Origin: *\r\nContent-Type: {contentType}\r\nContent-Length: {fileSize}";
+            return t;
+        }
+
+        private long GetFileSize(string filePath)
+        {
+            try
+            {
+                FileInfo fileInfo = new FileInfo(filePath);
+                return fileInfo.Length;
+            }
+            catch
+            {
+                return 0L;
+            }
         }
 
         private void ProcessApiRequest(Socket client, string requestedUrl)
