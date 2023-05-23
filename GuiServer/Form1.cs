@@ -239,16 +239,17 @@ namespace GuiServer
                     }
                     else if (request[0] == "HEAD")
                     {
-                        string fileRequested = request[1] == "/" ? "index.html" : request[1].Remove(0, 1);
+                        string decodedFileUrl = HttpUtility.UrlDecode(request[1]);
+                        string fileRequested = decodedFileUrl == "/" ? "index.html" : decodedFileUrl.Remove(0, 1);
                         string fullFilePath;
                         if (fileRequested.StartsWith("@/"))
                         {
                             fileRequested = fileRequested.Remove(0, 2);
-                            fullFilePath = Path.Combine(configurator.PublicDirectory, fileRequested);
+                            fullFilePath = Path.Combine(configurator.PublicDirectory, fileRequested.Replace("/", "\\"));
                         }
                         else
                         {
-                            fullFilePath = Path.Combine(webuiPath, fileRequested);
+                            fullFilePath = Path.Combine(webuiPath, fileRequested.Replace("/", "\\"));
                         }
 
                         if (File.Exists(fullFilePath))
