@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -211,6 +212,7 @@ namespace GuiServer
                 string[] request = strings[0].Split(new char[] { ' ' }, 3);
                 if (request.Length == 3)
                 {
+                    NameValueCollection headers = ParseHeaders(strings);
                     if (request[0] == "GET")
                     {
                         if (request[1].StartsWith("/api/"))
@@ -220,7 +222,7 @@ namespace GuiServer
                         }
                         else if (request[1].StartsWith("/@"))
                         {
-                            ProcessFileRequest(client, request[1].Substring(2));
+                            ProcessFileRequest(client, request[1].Substring(2), headers);
                             return true;
                         }
 
@@ -228,9 +230,8 @@ namespace GuiServer
                         string fullFilePath = Path.Combine(webuiPath, fileRequested);
                         if (File.Exists(fullFilePath))
                         {
-                            string fileExtension = Path.GetExtension(fullFilePath);
-                            byte[] fileBytes = File.ReadAllBytes(fullFilePath);
-                            SendData(client, fileBytes, fileExtension);
+                            ExtractRange(headers, out long byteFrom, out long byteTo);
+                            SendFileAsStream(client, fullFilePath, byteFrom, byteTo);
                         }
                         else
                         {
@@ -254,8 +255,8 @@ namespace GuiServer
 
                         if (File.Exists(fullFilePath))
                         {
-                            string headers = BuildHeaders(fullFilePath);
-                            SendMessage(client, $"HTTP/1.1 200 OK\r\n{headers}\r\n\r\n");
+                            string headersString = BuildHeaders(fullFilePath);
+                            SendMessage(client, $"HTTP/1.1 200 OK\r\n{headersString}\r\n\r\n");
                         }
                         else
                         {
@@ -356,7 +357,7 @@ namespace GuiServer
             }
         }
 
-        private void ProcessFileRequest(Socket client, string requestedFilePath)
+        private void ProcessFileRequest(Socket client, string requestedFilePath, NameValueCollection headers)
         {
             if (string.IsNullOrEmpty(requestedFilePath) || string.IsNullOrWhiteSpace(requestedFilePath))
             {
@@ -375,13 +376,55 @@ namespace GuiServer
             string fullFilePath = Path.Combine(configurator.PublicDirectory, decodedFilePath.Replace("/", "\\"));
             if (File.Exists(fullFilePath))
             {
-                byte[] fileBytes = File.ReadAllBytes(fullFilePath);
-                string fileExtension = Path.GetExtension(fullFilePath);
-                SendData(client, fileBytes, fileExtension.ToLower());
+                ExtractRange(headers, out long byteFrom, out long byteTo);
+                SendFileAsStream(client, fullFilePath, byteFrom, byteTo);
             }
             else
             {
                 SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
+            }
+        }
+
+        private void SendFileAsStream(Socket client, string filePath, long byteStart, long byteEnd)
+        {
+            try
+            {
+                using (Stream stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    stream.Position = byteStart;
+
+                    if (byteEnd == -1L || byteEnd < byteStart)
+                    {
+                        byteEnd = stream.Length == 0L ? 0 : stream.Length - 1L;
+                    }
+                    long segmentSize = byteStart == byteEnd ? 1L : byteEnd - byteStart + 1;
+                    string fileExt = Path.GetExtension(filePath);
+                    int errorCode = segmentSize == stream.Length ? 200 : 206;
+                    string t = $"HTTP/1.1 {errorCode} OK\r\nContent-Type: {GetContentType(fileExt)}\r\n" +
+                        $"Content-Length: {segmentSize}\r\naccept-range: bytes\r\n\r\n";
+                    byte[] buffer = Encoding.UTF8.GetBytes(t);
+                    client.Send(buffer, SocketFlags.None);
+
+                    long remaining = segmentSize;
+                    buffer = new byte[4096];
+                    while (remaining > 0L && client.Connected)
+                    {
+                        int bytesToRead = remaining > buffer.LongLength ? buffer.Length : (int)remaining;
+                        int bytesRead = stream.Read(buffer, 0, bytesToRead);
+                        if (bytesRead <= 0)
+                        {
+                            break;
+                        }
+
+                        remaining -= bytesRead;
+                        client.Send(buffer, 0, bytesRead, SocketFlags.None);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(ex.Message);
+                LogEvent(ex.Message.Split('\n')[0]);
             }
         }
 
@@ -552,6 +595,48 @@ namespace GuiServer
                     }
                 }
             }
+        }
+
+        private static NameValueCollection ParseHeaders(string[] strings)
+        {
+            NameValueCollection headers = new NameValueCollection();
+            for (int i = 1; i < strings.Length; ++i)
+            {
+                if (string.IsNullOrEmpty(strings[i]))
+                {
+                    break;
+                }
+                string[] splitted = strings[i].Split(new char[] { ':' }, 2);
+                if (splitted.Length == 2)
+                {
+                    headers.Add(splitted[0].Trim(), splitted[1].Trim());
+                }
+            }
+            return headers;
+        }
+
+        private static void ExtractRange(NameValueCollection headers, out long byteFrom, out long byteTo)
+        {
+            string t = headers.Get("Range");
+            if (!string.IsNullOrEmpty(t))
+            {
+                int n = t.IndexOf('=');
+                if (n >= 0)
+                {
+                    t = t.Substring(n + 1);
+                }
+                if (!string.IsNullOrEmpty(t) && !string.IsNullOrWhiteSpace(t))
+                {
+                    string[] splitted = t.Split('-');
+                    byteFrom = long.Parse(splitted[0]);
+                    byteTo = string.IsNullOrEmpty(splitted[1]) || string.IsNullOrWhiteSpace(splitted[1]) ?
+                        -1L : long.Parse(splitted[1]);
+                    return;
+                }
+            }
+
+            byteFrom = 0L;
+            byteTo = -1L;
         }
 
         private string GetContentType(string ext)
