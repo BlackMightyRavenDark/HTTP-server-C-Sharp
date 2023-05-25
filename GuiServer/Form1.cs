@@ -19,6 +19,7 @@ namespace GuiServer
         private List<Socket> clientList;
         private Dictionary<string, string> contentTypes = new Dictionary<string, string>();
         private Configurator configurator;
+        private bool isClosed = false;
         private static readonly string selfDirPath = Path.GetDirectoryName(Application.ExecutablePath);
         private readonly string webuiPath = $"{selfDirPath}\\webui";
 
@@ -66,6 +67,7 @@ namespace GuiServer
 
         private void Form1_FormClosed(object sender, FormClosedEventArgs e)
         {
+            isClosed = true;
             StopServer(server);
             configurator.Save();
         }
@@ -108,7 +110,7 @@ namespace GuiServer
             fbd.Dispose();
         }
 
-        private void StartServer()
+        private async void StartServer()
         {
             btnStartServer.Enabled = false;
             numericUpDownServerPort.Enabled = false;
@@ -152,7 +154,7 @@ namespace GuiServer
                 LogEvent($"Server started on port {configurator.ServerPort}");
 
                 active = true;
-                Task.Run(() =>
+                await Task.Run(() =>
                 {
                     while (active)
                     {
@@ -163,7 +165,8 @@ namespace GuiServer
 
                             Task.Run(() =>
                             {
-                                if (ProcessClient(client))
+                                ProcessClient(client);
+                                if (client.Connected)
                                 {
                                     DisconnectClient(client);
                                 }
@@ -181,17 +184,26 @@ namespace GuiServer
             {
                 MessageBox.Show($"Ошибка запуска сервера!\n{ex.Message}", "Ошибка!",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
-                server = null;
-                active = false;
+                return;
+            }
+
+            DisconnectAllClients();
+            server.Dispose();
+            server = null;
+
+            if (!isClosed)
+            {
                 btnStartServer.Enabled = true;
                 btnStopServer.Enabled = false;
                 numericUpDownServerPort.Enabled = true;
                 textBoxPublicDirectory.Enabled = true;
                 btnBrowsePublicDirectory.Enabled = true;
+
+                LogEvent("Server stopped!");
             }
         }
 
-        private bool ProcessClient(Socket client)
+        private void ProcessClient(Socket client)
         {
             AddClient(client);
 
@@ -202,7 +214,7 @@ namespace GuiServer
                 if (bytesRead == 0)
                 {
                     LogEvent($"Zero bytes received from {client.RemoteEndPoint}");
-                    return true;
+                    return;
                 }
 
                 string msg = Encoding.UTF8.GetString(buffer, 0, bytesRead);
@@ -218,12 +230,12 @@ namespace GuiServer
                         if (request[1].StartsWith("/api/"))
                         {
                             ProcessApiRequest(client, request[1].Substring(4));
-                            return true;
+                            return;
                         }
                         else if (request[1].StartsWith("/@"))
                         {
                             ProcessFileRequest(client, request[1].Substring(2), headers);
-                            return true;
+                            return;
                         }
 
                         string fileRequested = request[1] == "/" ? "index.html" : request[1].Remove(0, 1);
@@ -281,13 +293,8 @@ namespace GuiServer
                     int socketErrorCode = (ex as SocketException).ErrorCode;
                     string t = $"Client read error! Socket error {socketErrorCode}";
                     System.Diagnostics.Debug.WriteLine(t);
-
-                    const int WSAEINTR = 10004;
-                    return socketErrorCode != WSAEINTR;
                 }
             }
-
-            return true;
         }
 
         private void SendMessage(Socket client, string msg)
@@ -424,7 +431,6 @@ namespace GuiServer
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine(ex.Message);
-                LogEvent(ex.Message.Split('\n')[0]);
             }
         }
 
@@ -513,17 +519,20 @@ namespace GuiServer
 
         private void LogEvent(string eventText)
         {
-            if (InvokeRequired)
+            if (!isClosed)
             {
-                Invoke((MethodInvoker)delegate { LogEvent(eventText); });
-            }
-            else
-            {
-                string dateTime = DateTime.Now.ToString("yyyy.MM.dd HH:mm:ss");
-                listBoxLog.Items.Add($"{dateTime}> {eventText}");
-                if (checkBoxAutoscroll.Checked)
+                if (InvokeRequired)
                 {
-                    listBoxLog.SelectedIndex = listBoxLog.Items.Count - 1;
+                    Invoke((MethodInvoker)delegate { LogEvent(eventText); });
+                }
+                else
+                {
+                    string dateTime = DateTime.Now.ToString("yyyy.MM.dd HH:mm:ss");
+                    listBoxLog.Items.Add($"{dateTime}> {eventText}");
+                    if (checkBoxAutoscroll.Checked)
+                    {
+                        listBoxLog.SelectedIndex = listBoxLog.Items.Count - 1;
+                    }
                 }
             }
         }
@@ -534,10 +543,8 @@ namespace GuiServer
             {
                 try
                 {
-                    DisconnectAllClients();
                     serverSocket.Shutdown(SocketShutdown.Both);
                     serverSocket.Close();
-                    serverSocket = null;
                 }
                 catch (Exception ex)
                 {
@@ -547,17 +554,13 @@ namespace GuiServer
                         System.Diagnostics.Debug.WriteLine($"Socket error {(ex as SocketException).ErrorCode}");
                     }
                     serverSocket.Close();
-                    serverSocket = null;
                 }
-
-                LogEvent("Server stopped!");
             }
 
-            btnStopServer.Enabled = false;
-            numericUpDownServerPort.Enabled = true;
-            btnStartServer.Enabled = true;
-            textBoxPublicDirectory.Enabled = true;
-            btnBrowsePublicDirectory.Enabled = true;
+            if (!isClosed)
+            {
+                btnStopServer.Enabled = false;
+            }
         }
 
         private void LoadContentTypes(string filePath)
