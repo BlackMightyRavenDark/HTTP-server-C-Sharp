@@ -16,7 +16,7 @@ namespace GuiServer
     {
         private Socket server = null;
         private bool active = false;
-        private List<Socket> clientList;
+        private List<NativeSocket> clientList;
         private Dictionary<string, string> contentTypes = new Dictionary<string, string>();
         private Configurator configurator;
         private bool isClosed = false;
@@ -149,7 +149,7 @@ namespace GuiServer
                 server.Bind(endPoint);
                 server.Listen((int)SocketOptionName.MaxConnections);
 
-                clientList = new List<Socket>();
+                clientList = new List<NativeSocket>();
 
                 LogEvent($"Server started on port {configurator.ServerPort}");
 
@@ -160,12 +160,14 @@ namespace GuiServer
                     {
                         try
                         {
-                            Socket client = server.Accept();
-                            LogEvent($"{client.RemoteEndPoint} is connected");
+                            Socket socket = server.Accept();
+                            LogEvent($"{socket.RemoteEndPoint} is connected");
+                            NativeSocket client = new NativeSocket(socket);
 
                             Task.Run(() =>
                             {
-                                if (ProcessClient(client))
+                                ProcessClient(client);
+                                if (!client.IsDisposed)
                                 {
                                     DisconnectClient(client);
                                 }
@@ -201,23 +203,23 @@ namespace GuiServer
             }
         }
 
-        private bool ProcessClient(Socket client)
+        private void ProcessClient(NativeSocket client)
         {
             AddClient(client);
 
             byte[] buffer = new byte[ushort.MaxValue];
             try
             {
-                int bytesRead = client.Receive(buffer, 0, buffer.Length, SocketFlags.None);
+                int bytesRead = client.Handle.Receive(buffer, 0, buffer.Length, SocketFlags.None);
                 if (bytesRead == 0)
                 {
-                    LogEvent($"Zero bytes received from {client.RemoteEndPoint}");
-                    return true;
+                    LogEvent($"Zero bytes received from {client.Handle.RemoteEndPoint}");
+                    return;
                 }
 
                 string msg = Encoding.UTF8.GetString(buffer, 0, bytesRead);
                 string[] strings = msg.Split(new string[] { "\r\n" }, StringSplitOptions.None);
-                LogEvent($"{client.RemoteEndPoint} sent: {strings[0]}");
+                LogEvent($"{client.Handle.RemoteEndPoint} sent: {strings[0]}");
 
                 string[] request = strings[0].Split(new char[] { ' ' }, 3);
                 if (request.Length == 3)
@@ -228,12 +230,12 @@ namespace GuiServer
                         if (request[1].StartsWith("/api/"))
                         {
                             ProcessApiRequest(client, request[1].Substring(4));
-                            return true;
+                            return;
                         }
                         else if (request[1].StartsWith("/@"))
                         {
                             ProcessFileRequest(client, request[1].Substring(2), headers);
-                            return true;
+                            return;
                         }
 
                         string fileRequested = request[1] == "/" ? "index.html" : request[1].Remove(0, 1);
@@ -241,11 +243,11 @@ namespace GuiServer
                         if (File.Exists(fullFilePath))
                         {
                             ExtractRange(headers, out long byteFrom, out long byteTo);
-                            return SendFileAsStream(client, fullFilePath, byteFrom, byteTo);
+                            SendFileAsStream(client, fullFilePath, byteFrom, byteTo);
                         }
                         else
                         {
-                            return SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
+                            SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
                         }
                     }
                     else if (request[0] == "HEAD")
@@ -266,21 +268,21 @@ namespace GuiServer
                         if (File.Exists(fullFilePath))
                         {
                             string headersString = BuildHeaders(fullFilePath);
-                            return SendMessage(client, $"HTTP/1.1 200 OK\r\n{headersString}\r\n\r\n");
+                            SendMessage(client, $"HTTP/1.1 200 OK\r\n{headersString}\r\n\r\n");
                         }
                         else
                         {
-                            return SendMessage(client, GenerateResponse(404, "Not found", null));
+                            SendMessage(client, GenerateResponse(404, "Not found", null));
                         }
                     }
                     else
                     {
-                        return SendMessage(client, GenerateResponse(405, "Method not allowed", "Unsupported method"));
+                        SendMessage(client, GenerateResponse(405, "Method not allowed", "Unsupported method"));
                     }
                 }
                 else
                 {
-                    return SendMessage(client, GenerateResponse(400, "Client error", "Invalid request"));
+                    SendMessage(client, GenerateResponse(400, "Client error", "Invalid request"));
                 }
             }
             catch (Exception ex)
@@ -292,24 +294,13 @@ namespace GuiServer
                     string t = $"Client read error! Socket error {socketErrorCode}";
                     System.Diagnostics.Debug.WriteLine(t);
                 }
-                return false;
             }
         }
 
-        private bool SendMessage(Socket client, string msg)
+        private void SendMessage(NativeSocket client, string msg)
         {
-            try
-            {
-                byte[] msgBytes = Encoding.UTF8.GetBytes(msg);
-                client.Send(msgBytes);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine(ex.Message);
-                return false;
-            }
-
-            return true;
+            byte[] msgBytes = Encoding.UTF8.GetBytes(msg);
+            client.Handle.Send(msgBytes);
         }
 
         private string BuildHeaders(string filePath)
@@ -333,7 +324,7 @@ namespace GuiServer
             }
         }
 
-        private void ProcessApiRequest(Socket client, string requestedUrl)
+        private void ProcessApiRequest(NativeSocket client, string requestedUrl)
         {
             if (requestedUrl.StartsWith("/browse?"))
             {
@@ -341,10 +332,10 @@ namespace GuiServer
             }
         }
 
-        private bool ProcessApiBrowse(Socket client, string requestedUrl)
+        private void ProcessApiBrowse(NativeSocket client, string requestedUrl)
         {
             string decodedUrl = HttpUtility.UrlDecode(requestedUrl);
-            LogEvent($"{client.RemoteEndPoint} browsed to {decodedUrl}");
+            LogEvent($"{client.Handle.RemoteEndPoint} browsed to {decodedUrl}");
 
             string path = Path.Combine(configurator.PublicDirectory, decodedUrl.Remove(0, 1).Replace("/", "\\"));
             if (Directory.Exists(path))
@@ -369,21 +360,20 @@ namespace GuiServer
                     jArray.Add(jFile);
                 }
 
-                return SendData(client, Encoding.UTF8.GetBytes(jArray.ToString()), ".json");
+                SendData(client, Encoding.UTF8.GetBytes(jArray.ToString()), ".json");
             }
-
-            return true;
         }
 
-        private bool ProcessFileRequest(Socket client, string requestedFilePath, NameValueCollection headers)
+        private void ProcessFileRequest(NativeSocket client, string requestedFilePath, NameValueCollection headers)
         {
             if (string.IsNullOrEmpty(requestedFilePath) || string.IsNullOrWhiteSpace(requestedFilePath))
             {
-                return SendMessage(client, GenerateResponse(404, "Client error", "No file specified"));
+                SendMessage(client, GenerateResponse(404, "Client error", "No file specified"));
+                return;
             }
 
             string decodedFilePath = HttpUtility.UrlDecode(requestedFilePath);
-            LogEvent($"{client.RemoteEndPoint} requested file {decodedFilePath}");
+            LogEvent($"{client.Handle.RemoteEndPoint} requested file {decodedFilePath}");
             
             if (decodedFilePath.StartsWith("/"))
             {
@@ -394,15 +384,15 @@ namespace GuiServer
             if (File.Exists(fullFilePath))
             {
                 ExtractRange(headers, out long byteFrom, out long byteTo);
-                return SendFileAsStream(client, fullFilePath, byteFrom, byteTo);
+                SendFileAsStream(client, fullFilePath, byteFrom, byteTo);
             }
             else
             {
-                return SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
+                SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
             }
         }
 
-        private bool SendFileAsStream(Socket client, string filePath, long byteStart, long byteEnd)
+        private void SendFileAsStream(NativeSocket client, string filePath, long byteStart, long byteEnd)
         {
             try
             {
@@ -420,11 +410,11 @@ namespace GuiServer
                     string t = $"HTTP/1.1 {errorCode} OK\r\nContent-Type: {GetContentType(fileExt)}\r\n" +
                         $"Content-Length: {segmentSize}\r\naccept-range: bytes\r\n\r\n";
                     byte[] buffer = Encoding.UTF8.GetBytes(t);
-                    client.Send(buffer, SocketFlags.None);
+                    client.Handle.Send(buffer, SocketFlags.None);
 
                     long remaining = segmentSize;
                     buffer = new byte[4096];
-                    while (remaining > 0L && client.Connected)
+                    while (remaining > 0L && !client.IsDisposed && client.Handle.Connected)
                     {
                         int bytesToRead = remaining > buffer.LongLength ? buffer.Length : (int)remaining;
                         int bytesRead = stream.Read(buffer, 0, bytesToRead);
@@ -433,24 +423,24 @@ namespace GuiServer
                             break;
                         }
 
+                        client.Handle.Send(buffer, 0, bytesRead, SocketFlags.None, out SocketError socketError);
+                        if (socketError != SocketError.Success)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"File transferring error: {socketError}!");
+                            break;
+                        }
+
                         remaining -= bytesRead;
-                        client.Send(buffer, 0, bytesRead, SocketFlags.None);
                     }
                 }
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine(ex.Message);
-                if (ex is SocketException)
-                {
-                    return false;
-                }
             }
-
-            return true;
         }
 
-        private bool SendData(Socket client, byte[] data, string fileExtension)
+        private void SendData(NativeSocket client, byte[] data, string fileExtension)
         {
             string t = $"HTTP/1.1 200 OK\r\n" +
                 "Access-Control-Allow-Origin: *\r\n";
@@ -469,36 +459,25 @@ namespace GuiServer
 
             try
             {
-                client.Send(buffer);
+                client.Handle.Send(buffer);
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine(ex.Message);
-                return false;
             }
-
-            return true;
         }
 
-        private void DisconnectClient(Socket client, bool autoRemove = true)
+        private void DisconnectClient(NativeSocket client, bool autoRemove = true)
         {
-            try
+            if (!client.IsDisposed)
             {
-                LogEvent($"{client.RemoteEndPoint} is disconnected");
-                client.Shutdown(SocketShutdown.Both);
-                if (client.Connected)
-                {
-                    client.Disconnect(false);
-                }
+                
+                LogEvent($"{client.Handle.RemoteEndPoint} is disconnected");
                 if (autoRemove)
                 {
                     RemoveClient(client);
                 }
-                client.Close();
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine(ex.Message);
+                client.Dispose();
             }
         }
 
@@ -514,7 +493,7 @@ namespace GuiServer
             }
         }
 
-        private void AddClient(Socket client)
+        private void AddClient(NativeSocket client)
         {
             if (InvokeRequired)
             {
@@ -526,7 +505,7 @@ namespace GuiServer
             }
         }
 
-        private void RemoveClient(Socket client)
+        private void RemoveClient(NativeSocket client)
         {
             if (InvokeRequired)
             {
