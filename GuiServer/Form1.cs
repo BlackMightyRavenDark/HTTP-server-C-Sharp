@@ -186,7 +186,7 @@ namespace GuiServer
                 return;
             }
 
-            server.Dispose();
+            server.Close();
             server = null;
 
             if (!isClosed)
