@@ -492,7 +492,7 @@ namespace GuiServer
                 }
                 if (autoRemove)
                 {
-                    clientList.Remove(client);
+                    RemoveClient(client);
                 }
                 client.Close();
             }
