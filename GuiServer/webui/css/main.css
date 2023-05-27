@@ -36,6 +36,7 @@ a {
 #filelist > a {
     cursor: pointer;
     color: white;
+    border: 1px solid #222222;
 }
 
 #filelist > a:hover {
