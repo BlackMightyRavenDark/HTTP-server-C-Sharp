@@ -305,7 +305,7 @@ namespace GuiServer
 
         private string BuildHeaders(string filePath)
         {
-            string contentType = GetContentType(Path.GetExtension(filePath));
+            string contentType = GetContentType(Path.GetExtension(filePath)?.ToLower());
             long fileSize = GetFileSize(filePath);
             string t = $"Access-Control-Allow-Origin: *\r\nContent-Type: {contentType}\r\nContent-Length: {fileSize}";
             return t;
@@ -405,7 +405,7 @@ namespace GuiServer
                         byteEnd = stream.Length == 0L ? 0 : stream.Length - 1L;
                     }
                     long segmentSize = byteStart == byteEnd ? 1L : byteEnd - byteStart + 1;
-                    string fileExt = Path.GetExtension(filePath);
+                    string fileExt = Path.GetExtension(filePath)?.ToLower();
                     int errorCode = segmentSize == stream.Length ? 200 : 206;
                     string t = $"HTTP/1.1 {errorCode} OK\r\nContent-Type: {GetContentType(fileExt)}\r\n" +
                         $"Content-Length: {segmentSize}\r\naccept-range: bytes\r\n\r\n";
@@ -444,7 +444,7 @@ namespace GuiServer
         {
             string t = $"HTTP/1.1 200 OK\r\n" +
                 "Access-Control-Allow-Origin: *\r\n";
-            t += $"Content-Type: {GetContentType(fileExtension)}\r\n" +
+            t += $"Content-Type: {GetContentType(fileExtension?.ToLower())}\r\n" +
                 $"Content-Length: {data.Length}\r\n\r\n";
             byte[] header = Encoding.UTF8.GetBytes(t);
             byte[] buffer = new byte[header.Length + data.Length];
@@ -471,7 +471,6 @@ namespace GuiServer
         {
             if (!client.IsDisposed)
             {
-                
                 LogEvent($"{client.Handle.RemoteEndPoint} is disconnected");
                 if (autoRemove)
                 {
