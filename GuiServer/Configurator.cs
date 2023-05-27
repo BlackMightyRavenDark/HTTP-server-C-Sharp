@@ -8,6 +8,7 @@ namespace GuiServer
     {
         public string FilePath { get; private set; }
         public int ServerPort { get; set; }
+        public bool AutostartServer { get; set; }
         public string PublicDirectory { get; set; }
 
         public delegate void SavingDelegate(object sender, JObject root);
@@ -29,6 +30,7 @@ namespace GuiServer
         public void LoadDefaults()
         {
             ServerPort = 5555;
+            AutostartServer = false;
             PublicDirectory = Path.GetDirectoryName(Application.ExecutablePath);
         }
 

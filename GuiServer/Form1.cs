@@ -40,6 +40,7 @@ namespace GuiServer
             configurator.Saving += (s, json) =>
             {
                 json["serverPort"] = configurator.ServerPort;
+                json["autostartServer"] = configurator.AutostartServer;
                 json["publicDirectory"] = configurator.PublicDirectory;
             };
             configurator.Loading += (s, json) =>
@@ -55,11 +56,24 @@ namespace GuiServer
                 {
                     configurator.PublicDirectory = jt.Value<string>();
                 }
+
+                jt = json.Value<JToken>("autostartServer");
+                if (jt != null)
+                {
+                    configurator.AutostartServer = jt.Value<bool>();
+                }
             };
             configurator.Loaded += (s) =>
             {
                 numericUpDownServerPort.Value = configurator.ServerPort;
+                checkBoxAutostart.Checked = configurator.AutostartServer;
                 textBoxPublicDirectory.Text = configurator.PublicDirectory;
+
+                if (configurator.AutostartServer && !string.IsNullOrEmpty(configurator.PublicDirectory) &&
+                    !string.IsNullOrWhiteSpace(configurator.PublicDirectory) && Directory.Exists(configurator.PublicDirectory))
+                {
+                    StartServer();
+                }
             };
 
             configurator.Load();
@@ -80,6 +94,11 @@ namespace GuiServer
         private void textBoxPublicDirectory_TextChanged(object sender, EventArgs e)
         {
             configurator.PublicDirectory = textBoxPublicDirectory.Text;
+        }
+
+        private void checkBoxAutostart_CheckedChanged(object sender, EventArgs e)
+        {
+            configurator.AutostartServer = checkBoxAutostart.Checked;
         }
 
         private void btnStartServer_Click(object sender, EventArgs e)

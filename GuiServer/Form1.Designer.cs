@@ -39,6 +39,7 @@
             this.label1 = new System.Windows.Forms.Label();
             this.btnBrowsePublicDirectory = new System.Windows.Forms.Button();
             this.textBoxPublicDirectory = new System.Windows.Forms.TextBox();
+            this.checkBoxAutostart = new System.Windows.Forms.CheckBox();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDownServerPort)).BeginInit();
             this.groupBox1.SuspendLayout();
             this.SuspendLayout();
@@ -179,11 +180,24 @@
             this.textBoxPublicDirectory.TabIndex = 0;
             this.textBoxPublicDirectory.TextChanged += new System.EventHandler(this.textBoxPublicDirectory_TextChanged);
             // 
+            // checkBoxAutostart
+            // 
+            this.checkBoxAutostart.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
+            this.checkBoxAutostart.AutoSize = true;
+            this.checkBoxAutostart.Location = new System.Drawing.Point(501, 12);
+            this.checkBoxAutostart.Name = "checkBoxAutostart";
+            this.checkBoxAutostart.Size = new System.Drawing.Size(85, 17);
+            this.checkBoxAutostart.TabIndex = 8;
+            this.checkBoxAutostart.Text = "Автозапуск";
+            this.checkBoxAutostart.UseVisualStyleBackColor = true;
+            this.checkBoxAutostart.CheckedChanged += new System.EventHandler(this.checkBoxAutostart_CheckedChanged);
+            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(598, 351);
+            this.Controls.Add(this.checkBoxAutostart);
             this.Controls.Add(this.groupBox1);
             this.Controls.Add(this.checkBoxAutoscroll);
             this.Controls.Add(this.listBoxLog);
@@ -218,6 +232,7 @@
         private System.Windows.Forms.Button btnBrowsePublicDirectory;
         private System.Windows.Forms.TextBox textBoxPublicDirectory;
         private System.Windows.Forms.Label label1;
+        private System.Windows.Forms.CheckBox checkBoxAutostart;
     }
 }
 
