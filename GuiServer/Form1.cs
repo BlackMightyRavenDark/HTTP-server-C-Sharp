@@ -519,7 +519,10 @@ namespace GuiServer
             }
             else
             {
-                clientList.Add(client);
+                lock (client)
+                {
+                    clientList.Add(client);
+                }
             }
         }
 
@@ -531,7 +534,10 @@ namespace GuiServer
             }
             else
             {
-                clientList.Remove(client);
+                lock (client)
+                {
+                    clientList.Remove(client);
+                }
             }
         }
 

@@ -19,19 +19,22 @@ namespace GuiServer
 
             if (Handle != null)
             {
-                try
+                lock (Handle)
                 {
-                    Handle.Shutdown(SocketShutdown.Both);
-                    if (Handle.Connected)
+                    try
                     {
-                        Handle.Disconnect(false);
+                        Handle.Shutdown(SocketShutdown.Both);
+                        if (Handle.Connected)
+                        {
+                            Handle.Disconnect(false);
+                        }
+                        Handle.Close();
                     }
-                    Handle.Close();
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine(ex.Message);
-                    Handle.Close();
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine(ex.Message);
+                        Handle.Close();
+                    }
                 }
 
                 Handle = null;
