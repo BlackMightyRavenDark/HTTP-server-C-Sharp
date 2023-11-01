@@ -262,7 +262,8 @@ namespace GuiServer
                         if (File.Exists(fullFilePath))
                         {
                             ExtractRange(headers, out long byteFrom, out long byteTo);
-                            SendFileAsStream(client, fullFilePath, byteFrom, byteTo);
+                            bool isRanged = HasKey(headers, "Range");
+                            SendFileAsStream(client, fullFilePath, byteFrom, byteTo, isRanged);
                         }
                         else
                         {
@@ -286,8 +287,11 @@ namespace GuiServer
 
                         if (File.Exists(fullFilePath))
                         {
-                            string headersString = BuildHeaders(fullFilePath);
-                            SendMessage(client, $"HTTP/1.1 200 OK\r\n{headersString}\r\n\r\n");
+                            ExtractRange(headers, out long byteFrom, out long byteTo);
+                            bool isRanged = HasKey(headers, "Range");
+                            string headersString = BuildHeaders(fullFilePath, isRanged, byteFrom, byteTo);
+                            string responseCodeText = isRanged ? "206 Partial Content" : "200 OK";
+                            SendMessage(client, $"HTTP/1.1 {responseCodeText}\r\n{headersString}\r\n\r\n");
                         }
                         else
                         {
@@ -322,11 +326,21 @@ namespace GuiServer
             client.Handle.Send(msgBytes);
         }
 
-        private string BuildHeaders(string filePath)
+        private string BuildHeaders(string filePath, bool isRanged, long rangeFrom, long rangeTo)
         {
             string contentType = GetContentType(Path.GetExtension(filePath)?.ToLower());
             long fileSize = GetFileSize(filePath);
-            string t = $"Access-Control-Allow-Origin: *\r\nContent-Type: {contentType}\r\nContent-Length: {fileSize}";
+            string t = $"Access-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n" +
+                $"Content-Type: {contentType}\r\n";
+            if (isRanged)
+            {
+                t += $"Content-Length: {rangeTo - rangeFrom + 1L}\r\n" +
+                    $"Content-Range: bytes {rangeFrom}-{rangeTo}/{fileSize}";
+            }
+            else
+            {
+                t += $"Content-Length: {fileSize}";
+            }
             return t;
         }
 
@@ -403,7 +417,8 @@ namespace GuiServer
             if (File.Exists(fullFilePath))
             {
                 ExtractRange(headers, out long byteFrom, out long byteTo);
-                SendFileAsStream(client, fullFilePath, byteFrom, byteTo);
+                bool isRanged = HasKey(headers, "Range");
+                SendFileAsStream(client, fullFilePath, byteFrom, byteTo, isRanged);
             }
             else
             {
@@ -411,7 +426,7 @@ namespace GuiServer
             }
         }
 
-        private void SendFileAsStream(NativeSocket client, string filePath, long byteStart, long byteEnd)
+        private void SendFileAsStream(NativeSocket client, string filePath, long byteStart, long byteEnd, bool isRanged)
         {
             try
             {
@@ -421,13 +436,21 @@ namespace GuiServer
 
                     if (byteEnd == -1L || byteEnd < byteStart)
                     {
-                        byteEnd = stream.Length == 0L ? 0 : stream.Length - 1L;
+                        byteEnd = stream.Length == 0L ? 0L : stream.Length - 1L;
                     }
-                    long segmentSize = byteStart == byteEnd ? 1L : byteEnd - byteStart + 1;
+                    long segmentSize = byteStart == byteEnd ? 1L : byteEnd - byteStart + 1L;
                     string fileExt = Path.GetExtension(filePath)?.ToLower();
-                    int errorCode = segmentSize == stream.Length ? 200 : 206;
-                    string t = $"HTTP/1.1 {errorCode} OK\r\nContent-Type: {GetContentType(fileExt)}\r\n" +
-                        $"Content-Length: {segmentSize}\r\naccept-range: bytes\r\n\r\n";
+                    int errorCode = isRanged ? 206 : 200;
+                    string responseCodeText = errorCode == 200 ? "200 OK" : "206 Partial Content";
+                    string t = $"HTTP/1.1 {responseCodeText}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n" +
+                        $"Content-Type: {GetContentType(fileExt)}\r\n" +
+                        $"Content-Length: {segmentSize}";
+                    if (isRanged)
+                    {
+                        t += $"\r\nContent-Range: bytes {byteStart}-{byteEnd}/{stream.Length}";
+                    }
+                    t += "\r\n\r\n";
+
                     byte[] buffer = Encoding.UTF8.GetBytes(t);
                     client.Handle.Send(buffer, SocketFlags.None);
 
@@ -690,6 +713,15 @@ namespace GuiServer
             return contentTypes != null && !string.IsNullOrEmpty(ext) && !string.IsNullOrWhiteSpace(ext) &&
                 contentTypes.ContainsKey(ext) ? contentTypes[ext] :
                 "text/plain; charset=UTF-8";
+        }
+
+        private static bool HasKey(NameValueCollection collection, string key)
+        {
+            for (int i = 0; i < collection.Count; ++i)
+            {
+                if (collection.GetKey(i) == key) { return true; }
+            }
+            return false;
         }
     }
 }
