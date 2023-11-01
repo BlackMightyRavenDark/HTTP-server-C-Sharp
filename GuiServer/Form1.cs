@@ -202,8 +202,25 @@ namespace GuiServer
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Ошибка запуска сервера!\n{ex.Message}", "Ошибка!",
+                string msg = $"Ошибка запуска сервера! {ex.Message}";
+                LogEvent(msg);
+
+                if (server != null)
+                {
+                    server.Close();
+                    server = null;
+                }
+                active = false;
+
+                MessageBox.Show(msg, "Ошибка!",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+                btnStartServer.Enabled = true;
+                btnStopServer.Enabled = false;
+                numericUpDownServerPort.Enabled = true;
+                textBoxPublicDirectory.Enabled = true;
+                btnBrowsePublicDirectory.Enabled = true;
+
                 return;
             }
 
