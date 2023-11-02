@@ -278,8 +278,23 @@ namespace GuiServer
                         string fullFilePath = Path.Combine(webuiPath, fileRequested);
                         if (File.Exists(fullFilePath))
                         {
-                            ExtractRange(headers, out long byteFrom, out long byteTo);
+                            long byteFrom;
+                            long byteTo;
                             bool isRanged = HasKey(headers, "Range");
+                            if (isRanged)
+                            {
+                                if (!ExtractRange(headers, out byteFrom, out byteTo))
+                                {
+                                    SendMessage(client, GenerateResponse(400, "Client error", "Invalid range"));
+                                    return;
+                                }
+                            }
+                            else
+                            {
+                                byteFrom = 0L;
+                                byteTo = -1L;
+                            }
+
                             SendFileAsStream(client, fullFilePath, byteFrom, byteTo, isRanged);
                         }
                         else
@@ -304,11 +319,33 @@ namespace GuiServer
 
                         if (File.Exists(fullFilePath))
                         {
-                            ExtractRange(headers, out long byteFrom, out long byteTo);
+                            long fileSize = GetFileSize(fullFilePath);
                             bool isRanged = HasKey(headers, "Range");
-                            string headersString = BuildHeaders(fullFilePath, isRanged, byteFrom, byteTo);
-                            string responseCodeText = isRanged ? "206 Partial Content" : "200 OK";
-                            SendMessage(client, $"HTTP/1.1 {responseCodeText}\r\n{headersString}\r\n\r\n");
+                            if (isRanged)
+                            {
+                                if (ExtractRange(headers, out long byteFrom, out long byteTo))
+                                {
+                                    if (byteTo == -1L) { byteTo = fileSize == 0L ? 0L : fileSize - 1L; }
+                                    if (byteFrom >= 0L && byteFrom <= byteTo && byteTo < fileSize)
+                                    {
+                                        string headersString = BuildHeaders(fullFilePath, isRanged, byteFrom, byteTo);
+                                        SendMessage(client, $"HTTP/1.1 206 Partial content\r\n{headersString}\r\n\r\n");
+                                    }
+                                    else
+                                    {
+                                        SendMessage(client, GenerateResponse(416, "Range not satisfiable", fileSize));
+                                    }
+                                }
+                                else
+                                {
+                                    SendMessage(client, GenerateResponse(400, "Invalid range", fileSize));
+                                }
+                            }
+                            else
+                            {
+                                string headersString = BuildHeaders(fullFilePath);
+                                SendMessage(client, $"HTTP/1.1 200 OK\r\n{headersString}\r\n\r\n");
+                            }
                         }
                         else
                         {
@@ -359,6 +396,11 @@ namespace GuiServer
                 t += $"Content-Length: {fileSize}";
             }
             return t;
+        }
+
+        private string BuildHeaders(string filePath)
+        {
+            return BuildHeaders(filePath, false, 0L, 0L);
         }
 
         private long GetFileSize(string filePath)
@@ -433,8 +475,33 @@ namespace GuiServer
             string fullFilePath = Path.Combine(configurator.PublicDirectory, decodedFilePath.Replace("/", "\\"));
             if (File.Exists(fullFilePath))
             {
-                ExtractRange(headers, out long byteFrom, out long byteTo);
+                long byteFrom;
+                long byteTo;
                 bool isRanged = HasKey(headers, "Range");
+                if (isRanged)
+                {
+                    long fileSize = GetFileSize(fullFilePath);
+                    if (ExtractRange(headers, out byteFrom, out byteTo))
+                    {
+                        if (byteTo == -1L) { byteTo = fileSize == 0L ? 0L : fileSize - 1L; }
+                        if (byteFrom < 0L || byteFrom > byteTo || byteTo >= fileSize)
+                        {
+                            SendMessage(client, GenerateResponse(416, "Range not satisfiable", fileSize));
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        SendMessage(client, GenerateResponse(400, "Client error", "Invalid range", fileSize));
+                        return;
+                    }
+                }
+                else
+                {
+                    byteFrom = 0L;
+                    byteTo = -1L;
+                }
+
                 SendFileAsStream(client, fullFilePath, byteFrom, byteTo, isRanged);
             }
             else
@@ -449,16 +516,21 @@ namespace GuiServer
             {
                 using (Stream stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
-                    stream.Position = byteStart;
-
-                    if (byteEnd == -1L || byteEnd < byteStart)
+                    if (byteEnd == -1L)
                     {
                         byteEnd = stream.Length == 0L ? 0L : stream.Length - 1L;
                     }
+
+                    if (byteStart > byteEnd || byteStart >= stream.Length || byteEnd >= stream.Length)
+                    {
+                        SendMessage(client, GenerateResponse(416, "Range not satisfiable", stream.Length));
+                        return;
+                    }
+
                     long segmentSize = byteStart == byteEnd ? 1L : byteEnd - byteStart + 1L;
                     string fileExt = Path.GetExtension(filePath)?.ToLower();
                     int errorCode = isRanged ? 206 : 200;
-                    string responseCodeText = errorCode == 200 ? "200 OK" : "206 Partial Content";
+                    string responseCodeText = isRanged ? "206 Partial Content" : "200 OK";
                     string t = $"HTTP/1.1 {responseCodeText}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n" +
                         $"Content-Type: {GetContentType(fileExt)}\r\n" +
                         $"Content-Length: {segmentSize}";
@@ -471,6 +543,7 @@ namespace GuiServer
                     byte[] buffer = Encoding.UTF8.GetBytes(t);
                     client.Handle.Send(buffer, SocketFlags.None);
 
+                    stream.Position = byteStart;
                     long remaining = segmentSize;
                     buffer = new byte[4096];
                     while (remaining > 0L && !client.IsDisposed && client.Handle.Connected)
@@ -581,7 +654,7 @@ namespace GuiServer
             }
         }
 
-        private static string GenerateResponse(int errorCode, string msg, string body)
+        private static string GenerateResponse(int errorCode, string msg, string body, long contentLength = 0L)
         {
             string t = $"HTTP/1.1 {errorCode} {msg}\r\n" +
                 "Access-Control-Allow-Origin: *\r\n";
@@ -593,9 +666,14 @@ namespace GuiServer
             }
             else
             {
-                t += "Content-Length: 0\r\n\r\n";
+                t += $"Content-Length: {contentLength}\r\n\r\n";
             }
             return t;
+        }
+
+        private static string GenerateResponse(int errorCode, string msg, long contentLength)
+        {
+            return GenerateResponse(errorCode, msg, null, contentLength);
         }
 
         private void LogEvent(string eventText)
@@ -701,28 +779,61 @@ namespace GuiServer
             return headers;
         }
 
-        private static void ExtractRange(NameValueCollection headers, out long byteFrom, out long byteTo)
+        private static bool ExtractRange(NameValueCollection headers, out long byteFrom, out long byteTo)
         {
-            string t = headers.Get("Range");
-            if (!string.IsNullOrEmpty(t))
+            string rangeValue = headers.Get("Range");
+            if (!string.IsNullOrEmpty(rangeValue))
             {
-                int n = t.IndexOf('=');
+                int n = rangeValue.IndexOf('=');
                 if (n >= 0)
                 {
-                    t = t.Substring(n + 1);
+                    rangeValue = rangeValue.Substring(n + 1);
                 }
-                if (!string.IsNullOrEmpty(t) && !string.IsNullOrWhiteSpace(t))
+                if (!string.IsNullOrEmpty(rangeValue) && !string.IsNullOrWhiteSpace(rangeValue))
                 {
-                    string[] splitted = t.Split('-');
-                    byteFrom = long.Parse(splitted[0]);
-                    byteTo = string.IsNullOrEmpty(splitted[1]) || string.IsNullOrWhiteSpace(splitted[1]) ?
-                        -1L : long.Parse(splitted[1]);
-                    return;
+                    string[] splitted = rangeValue.Split('-');
+                    if (splitted == null || splitted.Length != 2)
+                    {
+                        byteFrom = 0L;
+                        byteTo = -1L;
+                        return false;
+                    }
+
+                    if (!string.IsNullOrEmpty(splitted[0]) && !string.IsNullOrWhiteSpace(splitted[0]))
+                    {
+                        if (!long.TryParse(splitted[0], out byteFrom))
+                        {
+                            byteFrom = 0L;
+                            byteTo = -1L;
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        byteFrom = 0L;
+                    }
+
+                    if (!string.IsNullOrEmpty(splitted[1]) && !string.IsNullOrWhiteSpace(splitted[1]))
+                    {
+                        if (!long.TryParse(splitted[1], out byteTo))
+                        {
+                            byteFrom = 0L;
+                            byteTo = -1L;
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        byteTo = -1L;
+                    }
+
+                    return true;
                 }
             }
 
             byteFrom = 0L;
             byteTo = -1L;
+            return false;
         }
 
         private string GetContentType(string ext)
