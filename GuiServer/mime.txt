@@ -32,6 +32,7 @@ text/html			|.html
 text/javascript		|.js
 
 #Разное
-application/json	|.json
-application/pdf		|.pdf
-application/zip		|.zip
+application/json			|.json
+application/pdf				|.pdf
+application/zip				|.zip
+text/plain; charset=UTF-8	|.txt

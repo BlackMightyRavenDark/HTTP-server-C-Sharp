@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Net.Sockets;
+using System.Text;
 
 namespace GuiServer
 {
@@ -7,6 +8,7 @@ namespace GuiServer
 	{
 		public Socket Handle { get; private set; }
 		public bool IsDisposed { get; private set; }
+		public bool IsConnected => !IsDisposed && Handle != null && Handle.Connected;
 
 		public NativeSocket(Socket socket)
 		{
@@ -39,6 +41,16 @@ namespace GuiServer
 
 				Handle = null;
 			}
+		}
+
+		public void Send(string message, Encoding encoding)
+		{
+			Handle.Send(encoding.GetBytes(message));
+		}
+
+		public void Send(string message)
+		{
+			Send(message, Encoding.UTF8);
 		}
 	}
 }

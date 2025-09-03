@@ -17,8 +17,16 @@ namespace GuiServer
 		private Socket server = null;
 		private bool active = false;
 		private List<NativeSocket> clientList;
-		private Dictionary<string, string> contentTypes = new Dictionary<string, string>();
+		private static readonly Dictionary<string, string> contentTypes = new Dictionary<string, string>();
 		private Configurator configurator;
+		private static readonly Dictionary<int, string> httpStatuses = new Dictionary<int, string>()
+		{
+			{ 200, "OK" },
+			{ 206, "Partial Content" },
+			{ 400, "Client Error" },
+			{ 404, "Not Found" },
+			{ 416, "Range Not Satisfiable" }
+		};
 		private bool isClosed = false;
 		private static readonly string selfDirPath = Path.GetDirectoryName(Application.ExecutablePath);
 		private readonly string webuiPath = $"{selfDirPath}\\webui";
@@ -257,110 +265,30 @@ namespace GuiServer
 				string[] strings = msg.Split(new string[] { "\r\n" }, StringSplitOptions.None);
 				LogEvent($"{client.Handle.RemoteEndPoint} sent: {strings[0]}");
 
+				WebHeaderCollection headers = ParseHeaders(strings);
+
 				string[] request = strings[0].Split(new char[] { ' ' }, 3);
-				if (request.Length == 3)
+				string method = request[0];
+				string endpoint = request[1];
+				if (endpoint.StartsWith("/webui"))
 				{
-					NameValueCollection headers = ParseHeaders(strings);
-					if (request[0] == "GET")
-					{
-						if (request[1].StartsWith("/api/"))
-						{
-							ProcessApiRequest(client, request[1].Substring(4));
-							return;
-						}
-						else if (request[1].StartsWith("/@"))
-						{
-							ProcessFileRequest(client, request[1].Substring(2), headers);
-							return;
-						}
-
-						string fileRequested = request[1] == "/" ? "index.html" : request[1].Remove(0, 1);
-						string fullFilePath = Path.Combine(webuiPath, fileRequested);
-						if (File.Exists(fullFilePath))
-						{
-							long byteFrom;
-							long byteTo;
-							bool isRanged = HasKey(headers, "Range");
-							if (isRanged)
-							{
-								if (!ExtractRange(headers, out byteFrom, out byteTo))
-								{
-									SendMessage(client, GenerateResponse(400, "Client error", "Invalid range"));
-									return;
-								}
-							}
-							else
-							{
-								byteFrom = 0L;
-								byteTo = -1L;
-							}
-
-							SendFileAsStream(client, fullFilePath, byteFrom, byteTo, isRanged);
-						}
-						else
-						{
-							SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
-						}
-					}
-					else if (request[0] == "HEAD")
-					{
-						string decodedFileUrl = HttpUtility.UrlDecode(request[1]);
-						string fileRequested = decodedFileUrl == "/" ? "index.html" : decodedFileUrl.Remove(0, 1);
-						string fullFilePath;
-						if (fileRequested.StartsWith("@/"))
-						{
-							fileRequested = fileRequested.Remove(0, 2);
-							fullFilePath = Path.Combine(configurator.PublicDirectory, fileRequested.Replace("/", "\\"));
-						}
-						else
-						{
-							fullFilePath = Path.Combine(webuiPath, fileRequested.Replace("/", "\\"));
-						}
-
-						if (File.Exists(fullFilePath))
-						{
-							long fileSize = GetFileSize(fullFilePath);
-							bool isRanged = HasKey(headers, "Range");
-							if (isRanged)
-							{
-								if (ExtractRange(headers, out long byteFrom, out long byteTo))
-								{
-									if (byteTo == -1L) { byteTo = fileSize == 0L ? 0L : fileSize - 1L; }
-									if (byteFrom >= 0L && byteFrom <= byteTo && byteTo < fileSize)
-									{
-										string headersString = BuildHeaders(fullFilePath, isRanged, byteFrom, byteTo);
-										SendMessage(client, $"HTTP/1.1 206 Partial content\r\n{headersString}\r\n\r\n");
-									}
-									else
-									{
-										SendMessage(client, GenerateResponse(416, "Range not satisfiable", fileSize));
-									}
-								}
-								else
-								{
-									SendMessage(client, GenerateResponse(400, "Invalid range", fileSize));
-								}
-							}
-							else
-							{
-								string headersString = BuildHeaders(fullFilePath);
-								SendMessage(client, $"HTTP/1.1 200 OK\r\n{headersString}\r\n\r\n");
-							}
-						}
-						else
-						{
-							SendMessage(client, GenerateResponse(404, "Not found", null));
-						}
-					}
-					else
-					{
-						SendMessage(client, GenerateResponse(405, "Method not allowed", "Unsupported method"));
-					}
+					string path = endpoint.Length >= 7 && endpoint[6] == '/' ? endpoint.Substring(7) : null;
+					ProcessWebUi(client, method, path, headers);
+				}
+				else if (endpoint.StartsWith("/@"))
+				{
+					ProcessFileRequest(client, method, endpoint.Substring(2), headers);
+				}
+				else if (endpoint.StartsWith("/api/browse"))
+				{
+					string path = endpoint.Length >= 12 && endpoint[11] == '?' ? endpoint.Substring(12) : null;
+					ProcessApiBrowse(client, method, path);
 				}
 				else
 				{
-					SendMessage(client, GenerateResponse(400, "Client error", "Invalid request"));
+					AnswerClient(client, 400, "Wrong endpoint");
 				}
+				
 			}
 			catch (Exception ex)
 			{
@@ -374,62 +302,69 @@ namespace GuiServer
 			}
 		}
 
-		private void SendMessage(NativeSocket client, string msg)
+		private void ProcessWebUi(NativeSocket client, string method, string requestedPath, WebHeaderCollection requestHeaders)
 		{
-			byte[] msgBytes = Encoding.UTF8.GetBytes(msg);
-			client.Handle.Send(msgBytes);
-		}
+			switch (method)
+			{
+				case "GET":
+					{
+						string decodedPath = string.IsNullOrEmpty(requestedPath) || string.IsNullOrWhiteSpace(requestedPath) ?
+							"index.html" : HttpUtility.UrlDecode(requestedPath);
+						string fullFilePath = Path.Combine(webuiPath, decodedPath);
+						if (!File.Exists(fullFilePath))
+						{
+							AnswerClient(client, 404, "File not found");
+							return;
+						}
+						SendFile(client, fullFilePath, requestHeaders);
+					}
+					break;
 
-		private string BuildHeaders(string filePath, bool isRanged, long rangeFrom, long rangeTo)
-		{
-			string contentType = GetContentType(Path.GetExtension(filePath)?.ToLower());
-			long fileSize = GetFileSize(filePath);
-			string t = $"Access-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n" +
-				$"Content-Type: {contentType}\r\n";
-			if (isRanged)
-			{
-				t += $"Content-Length: {rangeTo - rangeFrom + 1L}\r\n" +
-					$"Content-Range: bytes {rangeFrom}-{rangeTo}/{fileSize}";
-			}
-			else
-			{
-				t += $"Content-Length: {fileSize}";
-			}
-			return t;
-		}
+				case "HEAD":
+					{
+						string decodedPath = string.IsNullOrEmpty(requestedPath) || string.IsNullOrWhiteSpace(requestedPath) ?
+							"index.html" : HttpUtility.UrlDecode(requestedPath);
+						string fullFilePath = Path.Combine(webuiPath, decodedPath);
+						if (!File.Exists(fullFilePath))
+						{
+							AnswerClient(client, 404, "File not found");
+							return;
+						}
 
-		private string BuildHeaders(string filePath)
-		{
-			return BuildHeaders(filePath, false, 0L, 0L);
-		}
+						WebHeaderCollection answerHeaders = BuildHeaders(fullFilePath, requestHeaders);
+						if (answerHeaders == null)
+						{
+							AnswerClient(client, 500, "Can't access file");
+							return;
+						}
+						AnswerClient(client, 200, answerHeaders, null);
+					}
+					break;
 
-		private long GetFileSize(string filePath)
-		{
-			try
-			{
-				FileInfo fileInfo = new FileInfo(filePath);
-				return fileInfo.Length;
-			}
-			catch
-			{
-				return 0L;
-			}
-		}
-
-		private void ProcessApiRequest(NativeSocket client, string requestedUrl)
-		{
-			if (requestedUrl.StartsWith("/browse?"))
-			{
-				ProcessApiBrowse(client, requestedUrl.Substring(8));
+				default:
+					AnswerClient(client, method, 400, null, $"Wrong method: {method}");
+					break;
 			}
 		}
 
-		private void ProcessApiBrowse(NativeSocket client, string requestedUrl)
+		private void ProcessApiBrowse(NativeSocket client, string method, string requestedPath)
 		{
-			string decodedUrl = HttpUtility.UrlDecode(requestedUrl);
-			LogEvent($"{client.Handle.RemoteEndPoint} browsed to {decodedUrl}");
+			if (method != "GET")
+			{
+				AnswerClient(client, 400, $"Wrong method: {method}");
+				return;
+			}
 
-			string path = Path.Combine(configurator.PublicDirectory, decodedUrl.Remove(0, 1).Replace("/", "\\"));
+			if (string.IsNullOrEmpty(requestedPath) || string.IsNullOrWhiteSpace(requestedPath))
+			{
+				AnswerClient(client, 400, "Path not specified");
+				return;
+			}
+
+			string decodedPath = HttpUtility.UrlDecode(requestedPath);
+			LogEvent($"{client.Handle.RemoteEndPoint} browsed to {decodedPath}");
+
+			string path = Path.Combine(configurator.PublicDirectory, decodedPath.Remove(0, 1).Replace("/", "\\"));
 			if (Directory.Exists(path))
 			{
 				JArray jArray = new JArray();
@@ -437,30 +372,54 @@ namespace GuiServer
 				string[] directories = Directory.GetDirectories(path);
 				foreach (string directory in directories)
 				{
-					JObject jDir = new JObject();
-					jDir["name"] = Path.GetFileName(directory);
-					jDir["type"] = "directory";
+					JObject jDir = new JObject()
+					{
+						["name"] = Path.GetFileName(directory),
+						["type"] = "directory"
+					};
 					jArray.Add(jDir);
 				}
 
 				string[] files = Directory.GetFiles(path);
 				foreach (string file in files)
 				{
-					JObject jFile = new JObject();
-					jFile["name"] = Path.GetFileName(file);
-					jFile["type"] = "file";
+					JObject jFile = new JObject()
+					{
+						["name"] = Path.GetFileName(file),
+						["type"] = "file"
+					};
 					jArray.Add(jFile);
 				}
 
-				SendData(client, Encoding.UTF8.GetBytes(jArray.ToString()), ".json");
+				byte[] data = Encoding.UTF8.GetBytes(jArray.ToString());
+
+				WebHeaderCollection headers = GetDefaultHttpHeaders();
+				headers.Remove("Accept-Ranges");
+				headers["Content-Type"] = "application/json";
+				headers["Content-Length"] = data.Length.ToString();
+				headers["Last-Modified"] = DateTime.UtcNow.ToString("R");
+
+				AnswerClient(client, 200, headers, null);
+				client.Handle.Send(data);
+			}
+			else
+			{
+				AnswerClient(client, 404, "Directory is not found");
 			}
 		}
 
-		private void ProcessFileRequest(NativeSocket client, string requestedFilePath, NameValueCollection headers)
+		private void ProcessFileRequest(NativeSocket client, string requestedMethod,
+			string requestedFilePath, WebHeaderCollection headers)
 		{
+			if (requestedMethod != "GET")
+			{
+				AnswerClient(client, 400, $"Wrong method: {requestedMethod}");
+				return;
+			}
+
 			if (string.IsNullOrEmpty(requestedFilePath) || string.IsNullOrWhiteSpace(requestedFilePath))
 			{
-				SendMessage(client, GenerateResponse(404, "Client error", "No file specified"));
+				AnswerClient(client, 400, "No file specified");
 				return;
 			}
 
@@ -469,134 +428,11 @@ namespace GuiServer
 			
 			if (decodedFilePath.StartsWith("/"))
 			{
-				decodedFilePath = decodedFilePath.Remove(0, 1);
+				decodedFilePath = decodedFilePath.Substring(1);
 			}
  
 			string fullFilePath = Path.Combine(configurator.PublicDirectory, decodedFilePath.Replace("/", "\\"));
-			if (File.Exists(fullFilePath))
-			{
-				long byteFrom;
-				long byteTo;
-				bool isRanged = HasKey(headers, "Range");
-				if (isRanged)
-				{
-					long fileSize = GetFileSize(fullFilePath);
-					if (ExtractRange(headers, out byteFrom, out byteTo))
-					{
-						if (byteTo == -1L) { byteTo = fileSize == 0L ? 0L : fileSize - 1L; }
-						if (byteFrom < 0L || byteFrom > byteTo || byteTo >= fileSize)
-						{
-							SendMessage(client, GenerateResponse(416, "Range not satisfiable", fileSize));
-							return;
-						}
-					}
-					else
-					{
-						SendMessage(client, GenerateResponse(400, "Client error", "Invalid range", fileSize));
-						return;
-					}
-				}
-				else
-				{
-					byteFrom = 0L;
-					byteTo = -1L;
-				}
-
-				SendFileAsStream(client, fullFilePath, byteFrom, byteTo, isRanged);
-			}
-			else
-			{
-				SendMessage(client, GenerateResponse(404, "Not found", "File not found"));
-			}
-		}
-
-		private void SendFileAsStream(NativeSocket client, string filePath, long byteStart, long byteEnd, bool isRanged)
-		{
-			try
-			{
-				using (Stream stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-				{
-					if (byteEnd == -1L)
-					{
-						byteEnd = stream.Length == 0L ? 0L : stream.Length - 1L;
-					}
-
-					if (byteStart > byteEnd || byteStart >= stream.Length || byteEnd >= stream.Length)
-					{
-						SendMessage(client, GenerateResponse(416, "Range not satisfiable", stream.Length));
-						return;
-					}
-
-					long segmentSize = byteStart == byteEnd ? 1L : byteEnd - byteStart + 1L;
-					string fileExt = Path.GetExtension(filePath)?.ToLower();
-					int errorCode = isRanged ? 206 : 200;
-					string responseCodeText = isRanged ? "206 Partial Content" : "200 OK";
-					string t = $"HTTP/1.1 {responseCodeText}\r\nAccess-Control-Allow-Origin: *\r\nAccept-Ranges: bytes\r\n" +
-						$"Content-Type: {GetContentType(fileExt)}\r\n" +
-						$"Content-Length: {segmentSize}";
-					if (isRanged)
-					{
-						t += $"\r\nContent-Range: bytes {byteStart}-{byteEnd}/{stream.Length}";
-					}
-					t += "\r\n\r\n";
-
-					byte[] buffer = Encoding.UTF8.GetBytes(t);
-					client.Handle.Send(buffer, SocketFlags.None);
-
-					stream.Position = byteStart;
-					long remaining = segmentSize;
-					buffer = new byte[4096];
-					while (remaining > 0L && !client.IsDisposed && client.Handle.Connected)
-					{
-						int bytesToRead = remaining > buffer.LongLength ? buffer.Length : (int)remaining;
-						int bytesRead = stream.Read(buffer, 0, bytesToRead);
-						if (bytesRead <= 0)
-						{
-							break;
-						}
-
-						client.Handle.Send(buffer, 0, bytesRead, SocketFlags.None, out SocketError socketError);
-						if (socketError != SocketError.Success)
-						{
-							System.Diagnostics.Debug.WriteLine($"File transferring error: {socketError}!");
-							break;
-						}
-
-						remaining -= bytesRead;
-					}
-				}
-			}
-			catch (Exception ex)
-			{
-				System.Diagnostics.Debug.WriteLine(ex.Message);
-			}
-		}
-
-		private void SendData(NativeSocket client, byte[] data, string fileExtension)
-		{
-			string t = $"HTTP/1.1 200 OK\r\n" +
-				"Access-Control-Allow-Origin: *\r\n";
-			t += $"Content-Type: {GetContentType(fileExtension?.ToLower())}\r\n" +
-				$"Content-Length: {data.Length}\r\n\r\n";
-			byte[] header = Encoding.UTF8.GetBytes(t);
-			byte[] buffer = new byte[header.Length + data.Length];
-			for (int i = 0; i < header.Length; ++i)
-			{
-				buffer[i] = header[i];
-			}
-			for (int i = 0; i < data.Length; ++i)
-			{
-				buffer[i + header.Length] = data[i];
-			}
-
-			try
-			{
-				client.Handle.Send(buffer);
-			}
-			catch (Exception ex)
-			{
-				System.Diagnostics.Debug.WriteLine(ex.Message);
-			}
+			SendFile(client, fullFilePath, headers);
 		}
 
 		private void DisconnectClient(NativeSocket client, bool autoRemove = true)
@@ -654,28 +490,6 @@ namespace GuiServer
 			}
 		}
 
-		private static string GenerateResponse(int errorCode, string msg, string body, long contentLength = 0L)
-		{
-			string t = $"HTTP/1.1 {errorCode} {msg}\r\n" +
-				"Access-Control-Allow-Origin: *\r\n";
-			if (!string.IsNullOrEmpty(body))
-			{
-				byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
-				t += "Content-Type: text/plain; charset=UTF-8\r\n" +
-					$"Content-Length: {bodyBytes.Length}\r\n\r\n{body}";
-			}
-			else
-			{
-				t += $"Content-Length: {contentLength}\r\n\r\n";
-			}
-			return t;
-		}
-
-		private static string GenerateResponse(int errorCode, string msg, long contentLength)
-		{
-			return GenerateResponse(errorCode, msg, null, contentLength);
-		}
-
 		private void LogEvent(string eventText)
 		{
 			if (!isClosed)
@@ -693,6 +507,253 @@ namespace GuiServer
 						listBoxLog.SelectedIndex = listBoxLog.Items.Count - 1;
 					}
 				}
+			}
+		}
+
+		private static HttpStatus GetHttpStatus(int statusCode)
+		{
+			return httpStatuses.ContainsKey(statusCode) ?
+				new HttpStatus(statusCode, httpStatuses[statusCode]) :
+				new HttpStatus(500, "Internal Server Error");
+		}
+
+		private WebHeaderCollection BuildHeaders(string filePath, WebHeaderCollection requestHeaders)
+		{
+			if (requestHeaders != null)
+			{
+				ExtractRange(requestHeaders, out long byteFrom, out long byteTo, out bool isRanged);
+				return BuildHeaders(filePath, isRanged, byteFrom, byteTo);
+			}
+			return BuildHeaders(filePath, false, 0L, 0L);
+		}
+
+		private WebHeaderCollection BuildHeaders(string filePath, bool isRanged, long rangeFrom, long rangeTo)
+		{
+			try
+			{
+				FileInfo fileInfo = new FileInfo(filePath);
+				long segmentSize = isRanged ? (rangeTo - rangeFrom + 1L) : fileInfo.Length;
+
+				WebHeaderCollection headers = GetDefaultHttpHeaders();
+				headers["Content-Type"] = GetContentType(Path.GetExtension(filePath)?.ToLower());
+				headers["Content-Length"] = segmentSize.ToString();
+				headers["Last-Modified"] = fileInfo.LastWriteTimeUtc.ToString("R");
+
+				if (isRanged)
+				{
+					headers["Content-Range"] = $"bytes {FormatRangedRange(rangeFrom, rangeTo, fileInfo.Length)}";
+				}
+
+				return headers;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
+		private static WebHeaderCollection GetDefaultHttpHeaders()
+		{
+			return new WebHeaderCollection()
+			{
+				{ "Date", DateTime.UtcNow.ToString("R") },
+				{ "Access-Control-Allow-Origin", "*" },
+				{ "Accept-Ranges", "bytes" }
+			};
+		}
+
+		private static void AnswerClient(NativeSocket socket, string requestMethod, HttpStatus status,
+			WebHeaderCollection headers, string message)
+		{
+			byte[] body = requestMethod != "HEAD" && !string.IsNullOrEmpty(message) ? Encoding.UTF8.GetBytes(message) : null;
+			long contentLength = body != null ? body.LongLength : -1L;
+			if (headers == null) { headers = new WebHeaderCollection(); }
+			if (body != null)
+			{
+				headers["Content-Length"] = contentLength.ToString();
+			}
+			else
+			{
+				if (requestMethod == "POST" || requestMethod == "PUT")
+				{
+					headers["Content-Length"] = "0";
+				}
+				else
+				{
+					headers?.Remove("Content-Length");
+				}
+			}
+
+			if (status.Code == 416)
+			{
+				headers["Content-Range"] = $"bytes */{(contentLength < 0L ? "*" : contentLength.ToString())}";
+			}
+
+			string answer = $"HTTP/1.1 {status.Code} {status.Message}\r\n";
+			answer += headers != null && headers.Count > 0 ? $"{HttpHeadersToString(headers)}\r\n" : "\r\n";
+			socket.Send(answer);
+
+			if (body != null)
+			{
+				socket.Handle.Send(body);
+			}
+		}
+
+		private static void AnswerClient(NativeSocket socket, string method, int statusCode,
+			WebHeaderCollection headers, string message)
+		{
+			HttpStatus status = GetHttpStatus(statusCode);
+			AnswerClient(socket, method, status, headers, message);
+		}
+
+		private static void AnswerClient(NativeSocket socket, int statusCode, WebHeaderCollection headers, string message)
+		{
+			HttpStatus status = GetHttpStatus(statusCode);
+			AnswerClient(socket, null, status, headers, message);
+		}
+
+		private static void AnswerClient(NativeSocket socket, int statusCode, string message)
+		{
+			HttpStatus status = GetHttpStatus(statusCode);
+			AnswerClient(socket, null, status, null, message);
+		}
+
+		private void SendStream(NativeSocket socket, Stream stream, long position, long segmentSize)
+		{
+			if (segmentSize <= 0L || stream.Length <= 0L || !socket.IsConnected) { return; }
+			string clientAddress = socket.Handle.RemoteEndPoint.ToString();
+			stream.Position = position;
+			long remaining = segmentSize;
+			byte[] buffer = new byte[4096];
+			while (remaining > 0L && socket.IsConnected)
+			{
+				int toRead = remaining > buffer.Length ? buffer.Length : (int)remaining;
+				int read = stream.Read(buffer, 0, toRead);
+				if (read <= 0) { break; }
+				remaining -= read;
+				socket.Handle.Send(buffer, 0, read, SocketFlags.None, out SocketError socketError);
+				if (socketError != SocketError.Success)
+				{
+					System.Diagnostics.Debug.WriteLine($"Socket {clientAddress} error: {socketError}");
+					break;
+				}
+			}
+		}
+
+		private void SendStream(NativeSocket socket, Stream stream)
+		{
+			if (stream.Length > 0L && socket.IsConnected)
+			{
+				string clientAddress = socket.Handle.RemoteEndPoint.ToString();
+				byte[] buffer = new byte[4096];
+				while (socket.IsConnected)
+				{
+					int read = stream.Read(buffer, 0, buffer.Length);
+					if (read <= 0) { break; }
+					socket.Handle.Send(buffer, 0, read, SocketFlags.None, out SocketError socketError);
+					if (socketError != SocketError.Success)
+					{
+						System.Diagnostics.Debug.WriteLine($"Socket {clientAddress} error: {socketError}");
+						break;
+					}
+				}
+			}
+		}
+
+		private void SendFile(NativeSocket socket, string filePath, long filePosition, long segmentLength)
+		{
+			try
+			{
+				using (Stream stream = File.OpenRead(filePath))
+				{
+					if (filePosition >= 0L && segmentLength >= 0L)
+					{
+						SendStream(socket, stream, filePosition, segmentLength);
+					}
+					else
+					{
+						SendStream(socket, stream);
+					}
+				}
+			}
+			catch (Exception ex)
+			{
+				System.Diagnostics.Debug.WriteLine(ex.Message);
+			}
+		}
+
+		private void SendFile(NativeSocket client, string filePath, WebHeaderCollection headers)
+		{
+			if (File.Exists(filePath))
+			{
+				long fileSize = GetFileSize(filePath);
+				long byteFrom;
+				long byteTo;
+				bool isRanged = HasKey(headers, "Range");
+				if (isRanged)
+				{
+					if (ExtractRange(headers, out byteFrom, out byteTo, out _))
+					{
+						if (byteTo == -1L) { byteTo = fileSize == 0L ? 0L : fileSize - 1L; }
+						if (byteFrom < 0L || byteFrom > byteTo || byteTo >= fileSize)
+						{
+							AnswerClient(client, 416, null);
+							return;
+						}
+					}
+					else
+					{
+						AnswerClient(client, 400, "Invalid range");
+						return;
+					}
+				}
+				else
+				{
+					byteFrom = 0L;
+					byteTo = -1L;
+				}
+
+				WebHeaderCollection answerHeaders = BuildHeaders(filePath, isRanged, byteFrom, byteTo);
+				if (answerHeaders == null)
+				{
+					AnswerClient(client, 500, "Can't access requested file");
+					return;
+				}
+
+				AnswerClient(client, isRanged ? 206 : 200, answerHeaders, null);
+				long segmentSize = byteTo < 0L ? -1L : (byteTo - byteFrom + 1L);
+				SendFile(client, filePath, byteFrom, segmentSize);
+			}
+			else
+			{
+				AnswerClient(client, 404, "File not found");
+			}
+		}
+
+		private static string HttpHeadersToString(WebHeaderCollection headers)
+		{
+			string s = string.Empty;
+			for (int i = 0; i < headers.Count; ++i)
+			{
+				string headerName = headers.GetKey(i);
+				if (!string.IsNullOrEmpty(headerName))
+				{
+					s += $"{headerName}: {headers.Get(i)}\r\n";
+				}
+			}
+			return s;
+		}
+
+		private long GetFileSize(string filePath)
+		{
+			try
+			{
+				FileInfo fileInfo = new FileInfo(filePath);
+				return fileInfo.Length;
+			}
+			catch
+			{
+				return 0L;
 			}
 		}
 
@@ -761,9 +822,9 @@ namespace GuiServer
 			}
 		}
 
-		private static NameValueCollection ParseHeaders(string[] strings)
+		private static WebHeaderCollection ParseHeaders(string[] strings)
 		{
-			NameValueCollection headers = new NameValueCollection();
+			WebHeaderCollection headers = new WebHeaderCollection();
 			for (int i = 1; i < strings.Length; ++i)
 			{
 				if (string.IsNullOrEmpty(strings[i]))
@@ -779,11 +840,12 @@ namespace GuiServer
 			return headers;
 		}
 
-		private static bool ExtractRange(NameValueCollection headers, out long byteFrom, out long byteTo)
+		private static bool ExtractRange(NameValueCollection headers, out long byteFrom, out long byteTo, out bool isRanged)
 		{
 			string rangeValue = headers.Get("Range");
 			if (!string.IsNullOrEmpty(rangeValue))
 			{
+				isRanged = true;
 				int n = rangeValue.IndexOf('=');
 				if (n >= 0)
 				{
@@ -833,21 +895,33 @@ namespace GuiServer
 
 			byteFrom = 0L;
 			byteTo = -1L;
+			isRanged = false;
 			return false;
+		}
+
+		private static string FormatRangedRange(long rangeFrom, long rangeTo, long contentLength)
+		{
+			string from = rangeFrom < 0L ? string.Empty : rangeFrom.ToString();
+			string to = rangeTo < 0L ? string.Empty : rangeTo.ToString();
+			string length = contentLength < 0L ? "*" : contentLength.ToString();
+			return $"{from}-{to}/{length}";
 		}
 
 		private string GetContentType(string ext)
 		{
 			return contentTypes != null && !string.IsNullOrEmpty(ext) && !string.IsNullOrWhiteSpace(ext) &&
 				contentTypes.ContainsKey(ext) ? contentTypes[ext] :
-				"text/plain; charset=UTF-8";
+				"application/octet-stream";
 		}
 
 		private static bool HasKey(NameValueCollection collection, string key)
 		{
-			for (int i = 0; i < collection.Count; ++i)
+			if (collection != null)
 			{
-				if (collection.GetKey(i) == key) { return true; }
+				for (int i = 0; i < collection.Count; ++i)
+				{
+					if (collection.GetKey(i) == key) { return true; }
+				}
 			}
 			return false;
 		}
