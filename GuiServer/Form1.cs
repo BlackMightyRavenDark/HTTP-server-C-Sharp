@@ -587,7 +587,7 @@ namespace GuiServer
 				{
 					headers["Content-Length"] = "0";
 				}
-				else if (requestMethod != "HEAD")
+				else if (requestMethod != null && requestMethod != "HEAD")
 				{
 					headers.Remove("Content-Length");
 				}
