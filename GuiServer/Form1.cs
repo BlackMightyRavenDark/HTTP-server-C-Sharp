@@ -411,7 +411,7 @@ namespace GuiServer
 		private void ProcessFileRequest(NativeSocket client, string requestedMethod,
 			string requestedFilePath, WebHeaderCollection headers)
 		{
-			if (requestedMethod != "GET")
+			if (requestedMethod != "GET" && requestedMethod != "HEAD")
 			{
 				AnswerClient(client, 400, $"Wrong method: {requestedMethod}");
 				return;
@@ -432,7 +432,16 @@ namespace GuiServer
 			}
  
 			string fullFilePath = Path.Combine(configurator.PublicDirectory, decodedFilePath.Replace("/", "\\"));
-			SendFile(client, fullFilePath, headers);
+
+			if (requestedMethod == "HEAD")
+			{
+				WebHeaderCollection answerHeaders = BuildHeaders(fullFilePath, headers);
+				AnswerClient(client, requestedMethod, answerHeaders != null ? 200 : 500, answerHeaders, null);
+			}
+			else
+			{
+				SendFile(client, fullFilePath, headers);
+			}
 		}
 
 		private void DisconnectClient(NativeSocket client, bool autoRemove = true)
@@ -578,9 +587,9 @@ namespace GuiServer
 				{
 					headers["Content-Length"] = "0";
 				}
-				else
+				else if (requestMethod != "HEAD")
 				{
-					headers?.Remove("Content-Length");
+					headers.Remove("Content-Length");
 				}
 			}
 
