@@ -574,7 +574,7 @@ namespace GuiServer
 		private static void AnswerClient(NativeSocket socket, string requestMethod, HttpStatus status,
 			WebHeaderCollection headers, string message)
 		{
-			byte[] body = requestMethod != "HEAD" && !string.IsNullOrEmpty(message) ? Encoding.UTF8.GetBytes(message) : null;
+			byte[] body = !string.IsNullOrEmpty(requestMethod) && requestMethod != "HEAD" && !string.IsNullOrEmpty(message) ? Encoding.UTF8.GetBytes(message) : null;
 			long contentLength = body != null ? body.LongLength : -1L;
 			if (headers == null) { headers = new WebHeaderCollection(); }
 			if (body != null)
