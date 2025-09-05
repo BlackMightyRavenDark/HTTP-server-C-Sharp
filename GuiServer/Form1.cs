@@ -336,7 +336,7 @@ namespace GuiServer
 							AnswerClient(client, 500, "Can't access file");
 							return;
 						}
-						AnswerClient(client, 200, answerHeaders, null);
+						AnswerClient(client, method, 200, answerHeaders, null);
 					}
 					break;
 
@@ -350,7 +350,7 @@ namespace GuiServer
 		{
 			if (method != "GET")
 			{
-				AnswerClient(client, 400, $"Wrong method: {method}");
+				AnswerClient(client, method, 400, null, $"Wrong method: {method}");
 				return;
 			}
 
@@ -573,7 +573,7 @@ namespace GuiServer
 		private static void AnswerClient(NativeSocket socket, string requestMethod, HttpStatus status,
 			WebHeaderCollection headers, string message)
 		{
-			byte[] body = !string.IsNullOrEmpty(requestMethod) && requestMethod != "HEAD" && !string.IsNullOrEmpty(message) ? Encoding.UTF8.GetBytes(message) : null;
+			byte[] body = requestMethod != "HEAD" && !string.IsNullOrEmpty(message) ? Encoding.UTF8.GetBytes(message) : null;
 			long contentLength = body != null ? body.LongLength : -1L;
 			if (headers == null) { headers = new WebHeaderCollection(); }
 			if (body != null)
