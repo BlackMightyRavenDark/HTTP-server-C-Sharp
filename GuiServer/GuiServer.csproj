@@ -94,13 +94,13 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <None Include="Resources\server.ico" />
-    <Content Include="webui\css\main.css">
+    <Content Include="web_ui\css\main.css">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
-    <Content Include="webui\index.html">
+    <Content Include="web_ui\index.html">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
-    <Content Include="webui\scripts\main.js">
+    <Content Include="web_ui\scripts\main.js">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

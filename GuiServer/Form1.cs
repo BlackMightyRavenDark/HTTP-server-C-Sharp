@@ -29,7 +29,7 @@ namespace GuiServer
 		};
 		private bool isClosed = false;
 		private static readonly string selfDirPath = Path.GetDirectoryName(Application.ExecutablePath);
-		private readonly string webuiPath = $"{selfDirPath}\\webui";
+		private readonly string webUiPath = $"{selfDirPath}\\web_ui";
 
 		public Form1()
 		{
@@ -270,10 +270,9 @@ namespace GuiServer
 				string[] request = strings[0].Split(new char[] { ' ' }, 3);
 				string method = request[0];
 				string endpoint = request[1];
-				if (endpoint.StartsWith("/webui"))
+				if (endpoint.StartsWith("/web_ui/"))
 				{
-					string path = endpoint.Length >= 7 && endpoint[6] == '/' ? endpoint.Substring(7) : null;
-					ProcessWebUi(client, method, path, headers);
+					ProcessWebUi(client, method, endpoint.Substring(8), headers);
 				}
 				else if (endpoint.StartsWith("/@"))
 				{
@@ -286,7 +285,7 @@ namespace GuiServer
 				}
 				else
 				{
-					AnswerClient(client, 400, "Wrong endpoint");
+					AnswerClient(client, method, 400, null, "Wrong endpoint! Navigate to 'GET /web_ui/'");
 				}
 				
 			}
@@ -310,7 +309,7 @@ namespace GuiServer
 					{
 						string decodedPath = string.IsNullOrEmpty(requestedPath) || string.IsNullOrWhiteSpace(requestedPath) ?
 							"index.html" : HttpUtility.UrlDecode(requestedPath);
-						string fullFilePath = Path.Combine(webuiPath, decodedPath);
+						string fullFilePath = Path.Combine(webUiPath, decodedPath);
 						if (!File.Exists(fullFilePath))
 						{
 							AnswerClient(client, 404, "File not found");
@@ -324,7 +323,7 @@ namespace GuiServer
 					{
 						string decodedPath = string.IsNullOrEmpty(requestedPath) || string.IsNullOrWhiteSpace(requestedPath) ?
 							"index.html" : HttpUtility.UrlDecode(requestedPath);
-						string fullFilePath = Path.Combine(webuiPath, decodedPath);
+						string fullFilePath = Path.Combine(webUiPath, decodedPath);
 						if (!File.Exists(fullFilePath))
 						{
 							AnswerClient(client, 404, "File not found");

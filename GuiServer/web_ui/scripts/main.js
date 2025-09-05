@@ -51,7 +51,7 @@ function parseResponse(json) {
                 await navigate(path);
             });
         } else {
-            nodeFileListItemAnchor.setAttribute("href", `@${encodeURIComponent(path)}`);
+            nodeFileListItemAnchor.setAttribute("href", `/@${encodeURIComponent(path)}`);
             nodeFileListItemAnchor.setAttribute("target", "_blank");
         }
         nodeFileListItemAnchor.appendChild(nodeFileListItem);
