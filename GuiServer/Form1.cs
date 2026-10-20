@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using System.Windows.Forms;
@@ -27,7 +28,7 @@ namespace GuiServer
 			{ 404, "Not Found" },
 			{ 416, "Range Not Satisfiable" }
 		};
-		private bool isClosed = false;
+		private bool isClosing = false;
 		private static readonly string selfDirPath = Path.GetDirectoryName(Application.ExecutablePath);
 		private readonly string webUiPath = $"{selfDirPath}\\web_ui";
 
@@ -87,10 +88,16 @@ namespace GuiServer
 			configurator.Load();
 		}
 
-		private void Form1_FormClosed(object sender, FormClosedEventArgs e)
+		private async void Form1_FormClosing(object sender, FormClosingEventArgs e)
 		{
-			isClosed = true;
-			StopServer(server);
+			isClosing = true;
+			if (active)
+			{
+				e.Cancel = true;
+				await StopServer(server);
+				Close();
+				return;
+			}
 			configurator.Save();
 		}
 
@@ -114,9 +121,9 @@ namespace GuiServer
 			StartServer();
 		}
 
-		private void btnStopServer_Click(object sender, EventArgs e)
+		private async void btnStopServer_Click(object sender, EventArgs e)
 		{
-			StopServer(server);
+			await StopServer(server);
 		}
 
 		private void btnBrowsePublicDirectory_Click(object sender, EventArgs e)
@@ -183,7 +190,7 @@ namespace GuiServer
 				active = true;
 				await Task.Run(() =>
 				{
-					while (active)
+					while (active && !isClosing)
 					{
 						try
 						{
@@ -191,7 +198,7 @@ namespace GuiServer
 							LogEvent($"{socket.RemoteEndPoint} is connected");
 							NativeSocket client = new NativeSocket(socket);
 
-							Task.Run(() =>
+							_ = Task.Run(() =>
 							{
 								ProcessClient(client);
 								if (!client.IsDisposed)
@@ -232,10 +239,12 @@ namespace GuiServer
 				return;
 			}
 
+			active = false;
 			server.Close();
 			server = null;
+			System.Diagnostics.Debug.WriteLine("The server is stopped!");
 
-			if (!isClosed)
+			if (!isClosing)
 			{
 				btnStartServer.Enabled = true;
 				btnStopServer.Enabled = false;
@@ -500,7 +509,7 @@ namespace GuiServer
 
 		private void LogEvent(string eventText)
 		{
-			if (!isClosed)
+			if (!isClosing)
 			{
 				if (InvokeRequired)
 				{
@@ -765,31 +774,39 @@ namespace GuiServer
 			}
 		}
 
-		private void StopServer(Socket serverSocket)
+		private async Task StopServer(Socket serverSocket)
 		{
 			if (serverSocket != null)
 			{
-				try
+				await Task.Run(() =>
 				{
-					serverSocket.Shutdown(SocketShutdown.Both);
-					serverSocket.Close();
-				}
-				catch (Exception ex)
-				{
-					System.Diagnostics.Debug.WriteLine(ex.Message);
-					if (ex is SocketException)
+					DisconnectAllClients();
+
+					try
 					{
-						System.Diagnostics.Debug.WriteLine($"Socket error {(ex as SocketException).ErrorCode}");
+						serverSocket.Close();
 					}
-					serverSocket.Close();
-				}
+					catch (Exception ex)
+					{
+						System.Diagnostics.Debug.WriteLine(ex.Message);
+						if (ex is SocketException)
+						{
+							System.Diagnostics.Debug.WriteLine($"Socket error {(ex as SocketException).ErrorCode}");
+						}
+					}
 
-				DisconnectAllClients();
-			}
-
-			if (!isClosed)
-			{
-				btnStopServer.Enabled = false;
+					bool isCompleted = false;
+					while (true)
+					{
+						Invoke(new MethodInvoker(() =>
+						{
+							System.Diagnostics.Debug.WriteLine("Waiting until the server stops...");
+							isCompleted = server == null;
+						}));
+						if (isCompleted) { break; }
+						Thread.Sleep(200);
+					}
+				});
 			}
 		}
 
